@@ -1,0 +1,120 @@
+{
+  "settings": {
+    "1": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "2": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "3": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "4": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "5": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "6": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "7": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "8": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    },
+    "9": {
+      "pan": 90,
+      "tilt": 45,
+      "power": 300
+    }
+  },
+  "stats": {
+    "totalFire": 11,
+    "hit": 0,
+    "miss": 0
+  },
+  "logs": [
+    {
+      "time": "2026-05-19 13:05:27",
+      "message": "[ADMIN] 관리자 로그인 성공"
+    },
+    {
+      "time": "2026-05-19 13:05:19",
+      "message": "[FIRE] TARGET 07 발사 완료"
+    },
+    {
+      "time": "2026-05-19 13:05:11",
+      "message": "[STOP] 긴급 정지"
+    },
+    {
+      "time": "2026-05-19 13:05:07",
+      "message": "[FIRE] TARGET 06 발사 완료"
+    },
+    {
+      "time": "2026-05-19 13:04:54",
+      "message": "[FIRE] TARGET 05 발사 완료"
+    },
+    {
+      "time": "2026-05-19 13:04:41",
+      "message": "[FIRE] TARGET 04 발사 완료"
+    },
+    {
+      "time": "2026-05-19 13:04:29",
+      "message": "[FIRE] TARGET 03 발사 완료"
+    },
+    {
+      "time": "2026-05-19 13:04:16",
+      "message": "[FIRE] TARGET 02 발사 완료"
+    },
+    {
+      "time": "2026-05-19 13:04:03",
+      "message": "[FIRE] TARGET 01 발사 완료"
+    },
+    {
+      "time": "2026-05-19 13:02:58",
+      "message": "[PATROL] 자동 순찰 모드 실행"
+    },
+    {
+      "time": "2026-05-19 12:44:59",
+      "message": "[PATROL] 자동 순찰 모드 실행"
+    },
+    {
+      "time": "2026-05-19 12:40:49",
+      "message": "[STOP] 긴급 정지"
+    },
+    {
+      "time": "2026-05-19 12:40:48",
+      "message": "[FIRE] TARGET 03 발사 완료"
+    },
+    {
+      "time": "2026-05-19 12:40:36",
+      "message": "[FIRE] TARGET 02 발사 완료"
+    },
+    {
+      "time": "2026-05-19 12:40:23",
+      "message": "[FIRE] TARGET 01 발사 완료"
+    },
+    {
+      "time": "2026-05-19 12:39:48",
+      "message": "[FIRE] TARGET 01 발사 완료"
+    }
+  ]
+}

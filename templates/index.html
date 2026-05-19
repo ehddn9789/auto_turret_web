@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auto Turret HUD</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="bootScreen" class="boot-screen">
+  <div class="boot-box">
+    <h1>SYSTEM BOOTING</h1>
+    <p id="bootText">Initializing...</p>
+    <div class="boot-bar"><div id="bootFill"></div></div>
+  </div>
+</div>
+
+<div id="flashEffect" class="flash-effect"></div>
+<div id="warningPopup" class="warning-popup">WARNING</div>
+
+<div id="preActionOverlay" class="pre-action-overlay">
+  <div class="pre-action-box">
+    <p id="preActionSub">SYSTEM SEQUENCE</p>
+    <strong id="preActionText">READY</strong>
+    <div class="pre-action-bar">
+      <div id="preActionFill"></div>
+    </div>
+  </div>
+</div>
+
+<div class="scanline"></div>
+<div class="noise"></div>
+
+<div class="screen">
+  <header>
+    <div>
+      <p class="sub">RASPBERRY PI CONTROL SYSTEM</p>
+      <h1>AUTO TURRET</h1>
+    </div>
+    <div class="online-box"><span class="online-dot"></span>SYSTEM ONLINE</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" onclick="openTab('main', this)">MAIN</button>
+    <button class="tab-btn" onclick="openTab('target', this)">TARGET</button>
+    <button class="tab-btn" onclick="openTab('manual', this)">MANUAL</button>
+    <button class="tab-btn" onclick="openTab('presentation', this)">PRESENT</button>
+    <button class="tab-btn" onclick="openTab('adminGate', this)">ADMIN</button>
+  </nav>
+
+  <section id="main" class="tab-content active">
+    <div class="main-grid">
+      <div class="panel radar-panel">
+        <h2>LIVE LIDAR RADAR</h2>
+        <div class="radar-wrapper">
+          <canvas id="radarCanvas"></canvas>
+          <div id="lockText" class="lock-text">TARGET LOCKED</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>3D TURRET HUD</h2>
+        <div class="turret-3d">
+          <div id="turretBase" class="turret-base">
+            <div id="turretHead" class="turret-head">
+              <div id="turretBarrel" class="turret-barrel"></div>
+            </div>
+          </div>
+        </div>
+        <div class="gauge-box">
+          <div><span>PAN</span><strong id="panValue">90°</strong><div class="bar"><div id="panBar"></div></div></div>
+          <div><span>TILT</span><strong id="tiltValue">45°</strong><div class="bar"><div id="tiltBar"></div></div></div>
+          <div><span>POWER</span><strong id="powerValue">300 ms</strong><div class="bar"><div id="powerBar"></div></div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>SYSTEM CHECKLIST</h2>
+        <div id="checklistBox" class="checklist-box"></div>
+      </div>
+
+      <div class="panel">
+        <h2>HARDWARE CONNECTION</h2>
+        <div id="connectionBox" class="connection-box"></div>
+      </div>
+
+      <div class="panel">
+        <h2>SYSTEM STATUS</h2>
+        <div class="status-list">
+          <div><span>현재 상태</span><strong id="systemState">대기 중</strong></div>
+          <div><span>선택 목표물</span><strong id="selectedTarget">없음</strong></div>
+          <div><span>자동 시연</span><strong id="demoState">OFF</strong></div>
+          <div><span>순찰 모드</span><strong id="patrolState">OFF</strong></div>
+          <div><span>수동 잠금</span><strong id="armedState">OFF</strong></div>
+          <div><span>LiDAR 상태</span><strong id="lidarState">CONNECTED</strong></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>FIRE STATS</h2>
+        <div class="stats-grid">
+          <div><span>총 발사</span><strong id="totalFire">0</strong></div>
+          <div><span>명중</span><strong id="hitCount">0</strong></div>
+          <div><span>실패</span><strong id="missCount">0</strong></div>
+          <div><span>명중률</span><strong id="hitRate">0%</strong></div>
+        </div>
+        <div class="result-buttons">
+          <button onclick="recordResult('hit')">HIT</button>
+          <button onclick="recordResult('miss')">MISS</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>FIRE SEQUENCE</h2>
+        <div class="timeline">
+          <div id="seq1">목표물 상승</div>
+          <div id="seq2">포탑 회전</div>
+          <div id="seq3">레이더 스캔</div>
+          <div id="seq4">조준선 정렬</div>
+          <div id="seq5">LOCK ON</div>
+          <div id="seq6">발사 준비</div>
+          <div id="seq7">카운트다운</div>
+          <div id="seq8">발사</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>SYSTEM WARNING</h2>
+        <div class="warning-list" id="warningList">
+          <p>[OK] All systems nominal</p>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <h2>MISSION LOG</h2>
+        <div class="log-box" id="logBox">
+          <p>[SYSTEM] READY</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="target" class="tab-content">
+    <div class="target-layout">
+      <div class="panel">
+        <h2>TARGET CONTROL</h2>
+        <div class="target-grid">
+          <button onclick="startFire(1)">TARGET 01</button>
+          <button onclick="startFire(2)">TARGET 02</button>
+          <button onclick="startFire(3)">TARGET 03</button>
+          <button onclick="startFire(4)">TARGET 04</button>
+          <button onclick="startFire(5)">TARGET 05</button>
+          <button onclick="startFire(6)">TARGET 06</button>
+          <button onclick="startFire(7)">TARGET 07</button>
+          <button onclick="startFire(8)">TARGET 08</button>
+          <button onclick="startFire(9)">TARGET 09</button>
+        </div>
+        <button class="demo-btn" onclick="startDemo()">AUTO DEMO MODE</button>
+        <button class="patrol-btn" onclick="togglePatrol()">AUTO PATROL MODE</button>
+      </div>
+
+      <div class="panel">
+        <h2>MISSION STATUS</h2>
+        <div class="status-display">
+          <p>현재 명령</p>
+          <strong id="status">대기 중</strong>
+        </div>
+        <button class="stop-btn" onclick="emergencyStop()">EMERGENCY STOP</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="manual" class="tab-content">
+    <div class="manual-layout">
+      <div class="panel">
+        <h2>MANUAL JOYSTICK CONTROL</h2>
+        <div class="joystick-area" id="joystickArea">
+          <div class="joystick-center"></div>
+          <div class="joystick-stick" id="joystickStick"></div>
+        </div>
+        <p class="manual-help">상 / 하 / 좌 / 우 방향만 제어, 손을 떼면 중앙 복귀</p>
+      </div>
+
+      <div class="panel">
+        <h2>MANUAL STATUS</h2>
+        <div class="manual-status">
+          <div><span>PAN</span><strong id="manualPan">90°</strong></div>
+          <div><span>TILT</span><strong id="manualTilt">90°</strong></div>
+          <div><span>POWER</span><strong id="manualPowerText">300 ms</strong></div>
+        </div>
+        <label class="power-label">POWER</label>
+        <input type="range" id="manualPower" min="50" max="3000" value="300" oninput="manualPowerChange()">
+        <button id="armBtn" class="arm-btn" onclick="toggleArm()">ARM OFF</button>
+        <button class="manual-fire-btn" onclick="manualFire()">MANUAL FIRE</button>
+        <button class="stop-btn" onclick="emergencyStop()">EMERGENCY STOP</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="presentation" class="tab-content">
+    <div class="presentation-grid">
+      <div class="presentation-radar">
+        <canvas id="presentationRadar"></canvas>
+      </div>
+      <div class="presentation-info">
+        <h2>PRESENTATION MODE</h2>
+        <p>실시간 LiDAR / 포탑 상태 / 발사 통계 대시보드</p>
+        <div class="presentation-stats">
+          <div>MODE <strong id="presentMode">STANDBY</strong></div>
+          <div>PAN <strong id="presentPan">90°</strong></div>
+          <div>TILT <strong id="presentTilt">45°</strong></div>
+          <div>FIRE <strong id="presentFire">0</strong></div>
+          <div>HIT RATE <strong id="presentRate">0%</strong></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="adminGate" class="tab-content">
+    <div class="panel admin-login">
+      <h2>ADMIN ACCESS</h2>
+      <p>설정 페이지에 접근하려면 비밀번호를 입력하세요.</p>
+      <input type="password" id="adminPassword" placeholder="PASSWORD">
+      <button onclick="adminLogin()">LOGIN</button>
+      <p id="adminMessage"></p>
+    </div>
+  </section>
+
+  <section id="adminPanel" class="tab-content">
+    <div class="panel">
+      <h2>ADMIN SETTINGS</h2>
+      <button class="reset-btn" onclick="resetData()">DATA RESET</button>
+      <div class="setting-grid" id="settingGrid"></div>
+    </div>
+  </section>
+</div>
+
+<div class="overlay" id="overlay">
+  <div>
+    <p>FIRING COUNTDOWN</p>
+    <strong id="bigCount">3</strong>
+  </div>
+</div>
+
+<script>
+let busy = false;
+let demoMode = false;
+let patrolMode = false;
+let patrolAngle = 90;
+let patrolDirection = 1;
+let manualPan = 90;
+let manualTilt = 90;
+let manualPower = 300;
+let armed = false;
+
+window.onload = () => {
+  runBootScreen();
+  resizeCanvas();
+  loadSettings();
+  updateStats();
+  updateChecklist();
+  updateConnections();
+  updateLogs();
+  updateTurretHUD(90, 45, 300);
+  initJoystick();
+  startWarningSystem();
+};
+
+function runBootScreen() {
+  const bootText = document.getElementById('bootText');
+  const bootFill = document.getElementById('bootFill');
+  const bootScreen = document.getElementById('bootScreen');
+
+  const steps = [
+    'Checking LiDAR...',
+    'Checking Web Server...',
+    'Loading HUD...',
+    'Loading Controls...',
+    'System Ready.'
+  ];
+
+  let index = 0;
+
+  const timer = setInterval(() => {
+
+    if (index < steps.length) {
+      bootText.innerText = steps[index];
+      bootFill.style.width =
+        ((index + 1) / steps.length * 100) + '%';
+
+      index++;
+    }
+
+    if (index >= steps.length) {
+
+      clearInterval(timer);
+
+      setTimeout(() => {
+        bootScreen.style.display = 'none';
+        bootScreen.classList.add('hide');
+      }, 500);
+    }
+
+  }, 500);
+
+  // 안전장치
+  setTimeout(() => {
+    bootScreen.style.display = 'none';
+    bootScreen.classList.add('hide');
+  }, 5000);
+}
+
+function openTab(tabName, btn) {
+  document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(tab => tab.classList.remove('active'));
+
+  const target = document.getElementById(tabName);
+  if (target) target.classList.add('active');
+
+  btn.classList.add('active');
+  resizeCanvas();
+}
+
+function addLog(text) {
+  const logBox = document.getElementById('logBox');
+  const p = document.createElement('p');
+  p.innerText = text;
+  logBox.prepend(p);
+}
+
+async function updateLogs() {
+  try {
+    const res = await fetch('/logs');
+    const logs = await res.json();
+    const logBox = document.getElementById('logBox');
+    logBox.innerHTML = '';
+
+    logs.forEach(log => {
+      const p = document.createElement('p');
+      p.innerText = `[${log.time}] ${log.message}`;
+      logBox.appendChild(p);
+    });
+  } catch {}
+}
+
+async function updateChecklist() {
+  try {
+    const res = await fetch('/checklist');
+    const data = await res.json();
+    const box = document.getElementById('checklistBox');
+    box.innerHTML = '';
+
+    Object.keys(data).forEach(key => {
+      const row = document.createElement('div');
+      row.innerHTML = `<span>${key}</span><strong class="${data[key] ? 'ok' : 'fail'}">${data[key] ? 'OK' : 'WAIT'}</strong>`;
+      box.appendChild(row);
+    });
+  } catch {}
+}
+
+async function updateConnections() {
+  try {
+    const res = await fetch('/connections');
+    const data = await res.json();
+    const box = document.getElementById('connectionBox');
+
+    box.innerHTML = `
+      <div><span>LiDAR</span><strong class="${data.lidar ? 'ok' : 'fail'}">${data.lidar ? 'ONLINE' : 'OFFLINE'}</strong></div>
+      <div><span>Arduino</span><strong class="${data.arduino ? 'ok' : 'fail'}">${data.arduino ? 'ONLINE' : 'WAIT'}</strong></div>
+      <div><span>PLC / HMI</span><strong class="${data.plc ? 'ok' : 'fail'}">${data.plc ? 'ONLINE' : 'WAIT'}</strong></div>
+      <div><span>Air Valve</span><strong class="${data.airValve ? 'ok' : 'fail'}">${data.airValve ? 'READY' : 'WAIT'}</strong></div>
+      <div><span>E-STOP</span><strong class="${data.emergencyStop ? 'ok' : 'fail'}">${data.emergencyStop ? 'READY' : 'ERROR'}</strong></div>
+    `;
+  } catch {}
+}
+
+function updateTimeline(stepId) {
+  document.querySelectorAll('.timeline div').forEach(el => el.classList.remove('active'));
+  const el = document.getElementById(stepId);
+  if (el) el.classList.add('active');
+}
+
+async function startFire(num) {
+  if (busy) return;
+  busy = true;
+  await executeFireSequence(num);
+  busy = false;
+}
+
+async function executeFireSequence(num) {
+  setSelectedTarget(num);
+  await targetDeployEffect(num);
+  await turretRotateEffect(num);
+  await radarFocusEffect();
+  await aimAlignEffect();
+  await lockOnEffect();
+  await fireReadyEffect();
+  await countdown();
+  await fire(num);
+
+  document.querySelectorAll('.timeline div').forEach(el => el.classList.remove('active'));
+  document.getElementById('systemState').innerText = '대기 중';
+}
+
+async function startDemo() {
+  if (busy) return;
+  busy = true;
+  demoMode = true;
+
+  document.getElementById('demoState').innerText = 'ON';
+  document.getElementById('systemState').innerText = 'AUTO DEMO';
+  addLog('[DEMO] 자동 시연 시작');
+
+  for (let i = 1; i <= 9; i++) {
+    if (!demoMode) break;
+    await executeFireSequence(i);
+    await delay(700);
+  }
+
+  demoMode = false;
+  busy = false;
+  document.getElementById('demoState').innerText = 'OFF';
+  document.getElementById('systemState').innerText = '대기 중';
+  addLog('[DEMO] 자동 시연 종료');
+}
+
+async function togglePatrol() {
+  patrolMode = !patrolMode;
+
+  document.getElementById('patrolState').innerText = patrolMode ? 'ON' : 'OFF';
+
+  if (patrolMode) {
+    patrolAngle = 90;
+    patrolDirection = 1;
+
+    updateTurretHUD(90, 45, manualPower);
+
+    document.getElementById('systemState').innerText = 'PATROL';
+    addLog('[PATROL] 자동 순찰 시작');
+
+    await fetch('/patrol');
+
+    runPatrolAnimation();
+  } else {
+    patrolAngle = 90;
+    patrolDirection = 1;
+
+    updateTurretHUD(90, 45, manualPower);
+
+    document.getElementById('systemState').innerText = '대기 중';
+    addLog('[PATROL] 자동 순찰 종료');
+  }
+}
+
+function runPatrolAnimation() {
+  if (!patrolMode) return;
+
+  patrolAngle += patrolDirection * 5;
+
+  if (patrolAngle >= 180) {
+    patrolAngle = 180;
+    patrolDirection = -1;
+  }
+
+  if (patrolAngle <= 0) {
+    patrolAngle = 0;
+    patrolDirection = 1;
+  }
+
+  updateTurretHUD(patrolAngle, 45, manualPower);
+
+  fetch('/manual', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      pan: patrolAngle,
+      tilt: 45,
+      power: manualPower
+    })
+  });
+
+  setTimeout(runPatrolAnimation, 250);
+}
+
+
+function showPreAction(mainText, subText, duration = 1000) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('preActionOverlay');
+    const text = document.getElementById('preActionText');
+    const sub = document.getElementById('preActionSub');
+    const fill = document.getElementById('preActionFill');
+
+    sub.innerText = subText || 'SYSTEM SEQUENCE';
+    text.innerText = mainText;
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+
+    overlay.classList.add('active');
+
+    setTimeout(() => {
+      fill.style.transition = `width ${duration}ms linear`;
+      fill.style.width = '100%';
+    }, 30);
+
+    setTimeout(() => {
+      overlay.classList.remove('active');
+      fill.style.transition = 'none';
+      fill.style.width = '0%';
+      resolve();
+    }, duration);
+  });
+}
+
+function targetDeployEffect(num) {
+  return new Promise(async resolve => {
+    updateTimeline('seq1');
+    document.getElementById('systemState').innerText = '목표물 상승';
+    addLog('[DEPLOY] TARGET ' + String(num).padStart(2, '0'));
+
+    const buttons = document.querySelectorAll('.target-grid button');
+    buttons.forEach(btn => btn.classList.remove('target-active'));
+    if (buttons[num - 1]) buttons[num - 1].classList.add('target-active');
+
+    await showPreAction('TARGET DEPLOY', 'TARGET ' + String(num).padStart(2, '0') + ' 상승 중', 1100);
+
+    if (buttons[num - 1]) buttons[num - 1].classList.remove('target-active');
+    resolve();
+  });
+}
+
+async function turretRotateEffect(num) {
+  updateTimeline('seq2');
+  document.getElementById('systemState').innerText = '포탑 회전';
+  addLog('[AIM] 포탑 목표 각도 이동');
+  await showPreAction('TURRET ROTATING', '목표 각도로 포탑 이동', 900);
+
+  let targetPan = 45 + num * 12;
+  let targetTilt = 45;
+  let targetPower = 300;
+
+  try {
+    const res = await fetch('/settings');
+    const settings = await res.json();
+    targetPan = Number(settings[num].pan);
+    targetTilt = Number(settings[num].tilt);
+    targetPower = Number(settings[num].power);
+  } catch {}
+
+  const startPan = manualPan;
+  const startTilt = manualTilt;
+  const steps = 30;
+
+  for (let step = 1; step <= steps; step++) {
+    const pan = Math.round(startPan + (targetPan - startPan) * (step / steps));
+    const tilt = Math.round(startTilt + (targetTilt - startTilt) * (step / steps));
+    updateTurretHUD(pan, tilt, targetPower);
+    await delay(40);
+  }
+
+  manualPan = targetPan;
+  manualTilt = targetTilt;
+  manualPower = targetPower;
+}
+
+function radarFocusEffect() {
+  return new Promise(async resolve => {
+    updateTimeline('seq3');
+    document.getElementById('systemState').innerText = '레이더 스캔';
+
+    const radar = document.querySelector('.radar-wrapper');
+    radar.classList.add('radar-focus');
+
+    await showPreAction('RADAR SCANNING', '목표 영역 집중 스캔', 1200);
+
+    radar.classList.remove('radar-focus');
+    resolve();
+  });
+}
+
+function aimAlignEffect() {
+  return new Promise(async resolve => {
+    updateTimeline('seq4');
+    document.getElementById('systemState').innerText = '조준선 정렬';
+
+    const radar = document.querySelector('.radar-wrapper');
+    const aim = document.createElement('div');
+    aim.className = 'aim-align-effect';
+    aim.innerHTML = `
+      <div class="aim-line horizontal"></div>
+      <div class="aim-line vertical"></div>
+      <div class="aim-circle"></div>
+      <div class="aim-text">AIM ALIGNING</div>
+    `;
+
+    radar.appendChild(aim);
+
+    await showPreAction('AIM ALIGNING', '조준선 정렬 중', 1300);
+
+    aim.remove();
+    resolve();
+  });
+}
+
+function lockOnEffect() {
+  return new Promise(async resolve => {
+    updateTimeline('seq5');
+    document.getElementById('systemState').innerText = 'LOCK ON';
+    addLog('[LOCK] TARGET LOCKED');
+
+    const lockText = document.getElementById('lockText');
+    lockText.classList.add('active');
+
+    await showPreAction('LOCKED', 'TARGET LOCK COMPLETE', 1200);
+
+    lockText.classList.remove('active');
+    resolve();
+  });
+}
+
+function fireReadyEffect() {
+  return new Promise(async resolve => {
+    updateTimeline('seq6');
+    document.getElementById('systemState').innerText = '발사 준비';
+
+    document.body.classList.add('fire-ready');
+    const popup = document.getElementById('warningPopup');
+    popup.innerText = 'FIRE SYSTEM ARMED';
+    popup.classList.add('active');
+
+    await showPreAction('FIRE SYSTEM ARMED', '발사 시스템 준비 완료', 1200);
+
+    document.body.classList.remove('fire-ready');
+    popup.classList.remove('active');
+    resolve();
+  });
+}
+
+function countdown() {
+  return new Promise(resolve => {
+    updateTimeline('seq7');
+    const overlay = document.getElementById('overlay');
+    const bigCount = document.getElementById('bigCount');
+    overlay.classList.add('active');
+
+    let count = 3;
+    bigCount.innerText = count;
+
+    const timer = setInterval(() => {
+      count--;
+      if (count > 0) {
+        bigCount.innerText = count;
+      } else {
+        clearInterval(timer);
+        bigCount.innerText = 'FIRE';
+
+        setTimeout(() => {
+          overlay.classList.remove('active');
+          resolve();
+        }, 700);
+      }
+    }, 1000);
+  });
+}
+
+async function fire(num) {
+  updateTimeline('seq8');
+  flashFireEffect();
+
+  const res = await fetch('/fire/' + num);
+  const text = await res.text();
+
+  document.getElementById('status').innerText = text;
+  addLog('[FIRE] ' + text);
+  updateStats();
+  updateLogs();
+}
+
+function flashFireEffect() {
+  const flash = document.getElementById('flashEffect');
+  const barrel = document.getElementById('turretBarrel');
+  flash.classList.add('active');
+  barrel.classList.add('recoil');
+
+  setTimeout(() => {
+    flash.classList.remove('active');
+    barrel.classList.remove('recoil');
+  }, 400);
+}
+
+function setSelectedTarget(num) {
+  document.getElementById('selectedTarget').innerText = 'TARGET ' + String(num).padStart(2, '0');
+}
+
+function emergencyStop() {
+  busy = false;
+  demoMode = false;
+  patrolMode = false;
+  armed = false;
+  document.getElementById('overlay').classList.remove('active');
+  document.getElementById('status').innerText = '긴급 정지';
+  document.getElementById('systemState').innerText = '긴급 정지';
+  document.getElementById('demoState').innerText = 'OFF';
+  document.getElementById('patrolState').innerText = 'OFF';
+  document.getElementById('armedState').innerText = 'OFF';
+  document.getElementById('armBtn').innerText = 'ARM OFF';
+  document.getElementById('armBtn').classList.remove('armed');
+  fetch('/stop');
+  addLog('[STOP] 긴급 정지 실행');
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function adminLogin() {
+  const password = document.getElementById('adminPassword').value;
+  const msg = document.getElementById('adminMessage');
+
+  const res = await fetch('/admin-login', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password})
+  });
+
+  if (res.ok) {
+    msg.innerText = '접근 허가';
+    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+    document.getElementById('adminPanel').classList.add('active');
+    loadSettings();
+    addLog('[ADMIN] 관리자 모드 접속');
+  } else {
+    msg.innerText = '비밀번호가 틀렸습니다.';
+  }
+}
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/settings');
+    const data = await res.json();
+    const grid = document.getElementById('settingGrid');
+    grid.innerHTML = '';
+
+    for (let i = 1; i <= 9; i++) {
+      const s = data[i];
+      grid.innerHTML += `
+        <div class="setting-card">
+          <h3>TARGET ${String(i).padStart(2, '0')}</h3>
+          <label>PAN</label>
+          <input type="number" id="pan${i}" value="${s.pan}" min="0" max="180">
+          <label>TILT</label>
+          <input type="number" id="tilt${i}" value="${s.tilt}" min="0" max="180">
+          <label>POWER</label>
+          <input type="number" id="power${i}" value="${s.power}" min="50" max="3000">
+          <button onclick="saveSetting(${i})">SAVE</button>
+        </div>
+      `;
+    }
+  } catch {}
+}
+
+async function saveSetting(num) {
+  const body = {
+    pan: document.getElementById('pan' + num).value,
+    tilt: document.getElementById('tilt' + num).value,
+    power: document.getElementById('power' + num).value
+  };
+
+  const res = await fetch('/settings/' + num, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+
+  const result = await res.json();
+  addLog('[SAVE] ' + result.message);
+  updateLogs();
+}
+
+async function resetData() {
+  await fetch('/reset-data', {method: 'POST'});
+  location.reload();
+}
+
+async function recordResult(result) {
+  await fetch('/record/' + result, {method: 'POST'});
+  updateStats();
+  updateLogs();
+}
+
+async function updateStats() {
+  try {
+    const res = await fetch('/stats');
+    const data = await res.json();
+    document.getElementById('totalFire').innerText = data.totalFire;
+    document.getElementById('hitCount').innerText = data.hit;
+    document.getElementById('missCount').innerText = data.miss;
+    document.getElementById('hitRate').innerText = data.hitRate + '%';
+    document.getElementById('presentFire').innerText = data.totalFire;
+    document.getElementById('presentRate').innerText = data.hitRate + '%';
+  } catch {}
+}
+
+function updateTurretHUD(pan, tilt, power) {
+  document.getElementById('panValue').innerText = Math.round(pan) + '°';
+  document.getElementById('tiltValue').innerText = Math.round(tilt) + '°';
+  document.getElementById('powerValue').innerText = power + ' ms';
+  document.getElementById('manualPan').innerText = Math.round(pan) + '°';
+  document.getElementById('manualTilt').innerText = Math.round(tilt) + '°';
+  document.getElementById('manualPowerText').innerText = power + ' ms';
+  document.getElementById('presentPan').innerText = Math.round(pan) + '°';
+  document.getElementById('presentTilt').innerText = Math.round(tilt) + '°';
+  document.getElementById('panBar').style.width = (pan / 180 * 100) + '%';
+  document.getElementById('tiltBar').style.width = (tilt / 180 * 100) + '%';
+  document.getElementById('powerBar').style.width = (power / 3000 * 100) + '%';
+  document.getElementById('turretBase').style.transform = `rotate(${pan - 90}deg)`;
+  document.getElementById('turretHead').style.transform = `rotateX(${45 - tilt}deg)`;
+}
+
+function manualPowerChange() {
+  manualPower = Number(document.getElementById('manualPower').value);
+  sendManualControl();
+}
+
+async function sendManualControl() {
+  await fetch('/manual', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pan: manualPan, tilt: manualTilt, power: manualPower})
+  });
+  updateTurretHUD(manualPan, manualTilt, manualPower);
+}
+
+async function toggleArm() {
+  armed = !armed;
+  await fetch('/arm', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({armed})
+  });
+  document.getElementById('armedState').innerText = armed ? 'ON' : 'OFF';
+  document.getElementById('armBtn').innerText = armed ? 'ARM ON' : 'ARM OFF';
+  document.getElementById('armBtn').classList.toggle('armed', armed);
+}
+
+async function manualFire() {
+  if (!armed) {
+    addWarning('[BLOCKED] ARM OFF - 발사 차단');
+    return;
+  }
+  flashFireEffect();
+  const res = await fetch('/manual-fire', {method: 'POST'});
+  const text = await res.text();
+  addLog('[MANUAL FIRE] ' + text);
+  updateStats();
+  updateLogs();
+}
+
+function initJoystick() {
+  const area = document.getElementById('joystickArea');
+  const stick = document.getElementById('joystickStick');
+  let dragging = false;
+
+  function resetStick() {
+    stick.style.transform = 'translate(0px, 0px)';
+    manualPan = 90;
+    manualTilt = 90;
+    sendManualControl();
+  }
+
+  function moveStick(clientX, clientY) {
+    const rect = area.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const dx = clientX - centerX;
+    const dy = clientY - centerY;
+    const max = rect.width / 2 - 45;
+    let moveX = 0;
+    let moveY = 0;
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (dx > 20) {
+        moveX = max;
+        manualPan = 180;
+        manualTilt = 90;
+      } else if (dx < -20) {
+        moveX = -max;
+        manualPan = 0;
+        manualTilt = 90;
+      }
+    } else {
+      if (dy > 20) {
+        moveY = max;
+        manualPan = 90;
+        manualTilt = 0;
+      } else if (dy < -20) {
+        moveY = -max;
+        manualPan = 90;
+        manualTilt = 180;
+      }
+    }
+
+    stick.style.transform = `translate(${moveX}px, ${moveY}px)`;
+    sendManualControl();
+  }
+
+  area.addEventListener('mousedown', e => {
+    dragging = true;
+    moveStick(e.clientX, e.clientY);
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (dragging) moveStick(e.clientX, e.clientY);
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragging) {
+      dragging = false;
+      resetStick();
+    }
+  });
+
+  area.addEventListener('touchstart', e => {
+    dragging = true;
+    const touch = e.touches[0];
+    moveStick(touch.clientX, touch.clientY);
+  });
+
+  area.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (dragging) {
+      const touch = e.touches[0];
+      moveStick(touch.clientX, touch.clientY);
+    }
+  }, {passive: false});
+
+  area.addEventListener('touchend', () => {
+    if (dragging) {
+      dragging = false;
+      resetStick();
+    }
+  });
+}
+
+function addWarning(text) {
+  const warningList = document.getElementById('warningList');
+  const p = document.createElement('p');
+  p.innerText = text;
+  warningList.prepend(p);
+  const popup = document.getElementById('warningPopup');
+  popup.innerText = text;
+  popup.classList.add('active');
+  setTimeout(() => popup.classList.remove('active'), 1800);
+}
+
+function startWarningSystem() {
+  const warnings = [
+    '[WARNING] LOW PRESSURE CHECK',
+    '[WARNING] LIDAR SIGNAL WEAK',
+    '[NOTICE] TARGET POSITION UPDATED',
+    '[WARNING] MANUAL CONTROL STANDBY',
+    '[NOTICE] DATA SAVED'
+  ];
+  setInterval(() => {
+    const warning = warnings[Math.floor(Math.random() * warnings.length)];
+    addWarning(warning);
+    addLog(warning);
+  }, 12000);
+}
+
+const canvas = document.getElementById('radarCanvas');
+const ctx = canvas.getContext('2d');
+const pCanvas = document.getElementById('presentationRadar');
+const pCtx = pCanvas.getContext('2d');
+
+function resizeCanvas() {
+  const wrapper = document.querySelector('.radar-wrapper');
+  if (wrapper) {
+    canvas.width = wrapper.clientWidth;
+    canvas.height = wrapper.clientWidth;
+  }
+  if (pCanvas) {
+    const width = pCanvas.clientWidth || 500;
+    pCanvas.width = width;
+    pCanvas.height = width;
+  }
+}
+
+function drawRadarOn(ctxTarget, canvasTarget, points) {
+  const w = canvasTarget.width;
+  const h = canvasTarget.height;
+  if (w <= 0 || h <= 0) return;
+  const cx = w / 2;
+  const cy = h / 2;
+  const radius = w / 2 - 12;
+
+  ctxTarget.clearRect(0, 0, w, h);
+  ctxTarget.beginPath();
+  ctxTarget.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctxTarget.strokeStyle = '#22d3ee';
+  ctxTarget.lineWidth = 2;
+  ctxTarget.stroke();
+
+  for (let i = 1; i <= 4; i++) {
+    ctxTarget.beginPath();
+    ctxTarget.arc(cx, cy, radius * (i / 4), 0, Math.PI * 2);
+    ctxTarget.strokeStyle = 'rgba(34,211,238,0.25)';
+    ctxTarget.stroke();
+  }
+
+  points.forEach(point => {
+    const angle = (point.angle - 90) * Math.PI / 180;
+    const dist = Math.min(point.distance / 250, 1);
+    const x = cx + Math.cos(angle) * radius * dist;
+    const y = cy + Math.sin(angle) * radius * dist;
+    ctxTarget.beginPath();
+    ctxTarget.arc(x, y, 4, 0, Math.PI * 2);
+    ctxTarget.fillStyle = '#facc15';
+    ctxTarget.shadowBlur = 10;
+    ctxTarget.shadowColor = '#facc15';
+    ctxTarget.fill();
+    ctxTarget.shadowBlur = 0;
+  });
+}
+
+async function updateRadar() {
+  try {
+    const res = await fetch('/lidar');
+    const data = await res.json();
+    drawRadarOn(ctx, canvas, data.points);
+    drawRadarOn(pCtx, pCanvas, data.points);
+    document.getElementById('lidarState').innerText = 'CONNECTED';
+  } catch {
+    document.getElementById('lidarState').innerText = 'ERROR';
+  }
+}
+
+window.addEventListener('resize', resizeCanvas);
+setInterval(updateRadar, 220);
+setInterval(updateStats, 2000);
+setInterval(updateChecklist, 3000);
+setInterval(updateConnections, 3000);
+</script>
+
+</body>
+</html>
