@@ -456,6 +456,21 @@ strong,
   height: 100%;
 }
 
+.system-warning .warning-list {
+  flex: 1;
+  min-height: 220px;
+  height: auto;
+  overflow-y: auto;
+
+  background: rgba(15,23,42,0.8);
+  border-radius: 12px;
+  padding: 14px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .warning-list p {
   color: #facc15;
   font-family: Consolas, monospace;
