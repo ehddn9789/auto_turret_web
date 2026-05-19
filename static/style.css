@@ -1106,4 +1106,19 @@ body.fire-ready::before {
     height: 180px !important;
     max-height: 180px !important;
   }
+
+/* FIRE SEQUENCE / SYSTEM WARNING same height fix */
+  .main-grid > .panel:nth-of-type(7),
+  .main-grid > .panel.system-warning {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .main-grid > .panel:nth-of-type(7) .timeline,
+  .main-grid > .panel.system-warning .warning-list {
+    height: clamp(320px, 42vh, 520px) !important;
+    max-height: clamp(320px, 42vh, 520px) !important;
+    min-height: 320px !important;
+    overflow-y: auto !important;
+  }
 }

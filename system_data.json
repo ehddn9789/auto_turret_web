@@ -47,11 +47,39 @@
     }
   },
   "stats": {
-    "totalFire": 11,
+    "totalFire": 15,
     "hit": 0,
     "miss": 0
   },
   "logs": [
+    {
+      "time": "2026-05-19 14:32:49",
+      "message": "[FIRE] TARGET 03 발사 완료"
+    },
+    {
+      "time": "2026-05-19 14:32:38",
+      "message": "[STOP] 긴급 정지"
+    },
+    {
+      "time": "2026-05-19 14:32:36",
+      "message": "[FIRE] TARGET 02 발사 완료"
+    },
+    {
+      "time": "2026-05-19 14:32:23",
+      "message": "[FIRE] TARGET 01 발사 완료"
+    },
+    {
+      "time": "2026-05-19 14:32:03",
+      "message": "[PATROL] 자동 순찰 모드 실행"
+    },
+    {
+      "time": "2026-05-19 14:32:02",
+      "message": "[STOP] 긴급 정지"
+    },
+    {
+      "time": "2026-05-19 14:32:01",
+      "message": "[FIRE] TARGET 01 발사 완료"
+    },
     {
       "time": "2026-05-19 13:05:27",
       "message": "[ADMIN] 관리자 로그인 성공"
