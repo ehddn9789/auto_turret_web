@@ -224,7 +224,13 @@ h1 {
   display: block;
 }
 
-.main-grid,
+.main-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 0.9fr;
+  gap: 24px;
+
+  align-items: stretch;
+}
 .target-layout,
 .manual-layout,
 .presentation-grid {
@@ -425,11 +431,29 @@ strong,
 }
 
 .warning-list {
-  height: 210px;
+  flex: 1;
+  min-height: 0;
+
+  height: 100%;
+
   overflow-y: auto;
+
   background: rgba(15,23,42,0.8);
+
   border-radius: 12px;
+
   padding: 14px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.system-warning {
+  display: flex;
+  flex-direction: column;
+
+  height: 100%;
 }
 
 .warning-list p {
