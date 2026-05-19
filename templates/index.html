@@ -1025,23 +1025,72 @@ function drawRadarOn(ctxTarget, canvasTarget, points) {
   });
 }
 
+let lidarLoading = false;
+
 async function updateRadar() {
+
+  if (lidarLoading) return;
+
+  lidarLoading = true;
+
   try {
+
     const res = await fetch('/lidar');
+
     const data = await res.json();
+
     drawRadarOn(ctx, canvas, data.points);
+
     drawRadarOn(pCtx, pCanvas, data.points);
+
     document.getElementById('lidarState').innerText = 'CONNECTED';
+
   } catch {
+
     document.getElementById('lidarState').innerText = 'ERROR';
+
+  } finally {
+
+    lidarLoading = false;
+
   }
 }
 
 window.addEventListener('resize', resizeCanvas);
-setInterval(updateRadar, 220);
-setInterval(updateStats, 2000);
-setInterval(updateChecklist, 3000);
-setInterval(updateConnections, 3000);
+let radarTimer = null;
+let statsTimer = null;
+let checklistTimer = null;
+let connectionTimer = null;
+
+function startAutoUpdate() {
+  stopAutoUpdate();
+
+  radarTimer = setInterval(updateRadar, 500);
+  statsTimer = setInterval(updateStats, 3000);
+  checklistTimer = setInterval(updateChecklist, 5000);
+  connectionTimer = setInterval(updateConnections, 5000);
+}
+
+function stopAutoUpdate() {
+  if (radarTimer) clearInterval(radarTimer);
+  if (statsTimer) clearInterval(statsTimer);
+  if (checklistTimer) clearInterval(checklistTimer);
+  if (connectionTimer) clearInterval(connectionTimer);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopAutoUpdate();
+  } else {
+    updateRadar();
+    updateStats();
+    updateChecklist();
+    updateConnections();
+    startAutoUpdate();
+  }
+});
+
+startAutoUpdate();
 </script>
 
 </body>
