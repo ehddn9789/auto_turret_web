@@ -108,6 +108,11 @@ def send_arduino_command(command):
     if TEST_MODE:
         response = "AIM_OK:120"
 
+        print(f"[ARDUINO TEST MODE] ON")
+        print(f"[ARDUINO TX] {command}")
+        print(f"[ARDUINO RX] {response}")
+
+        add_log("[ARDUINO TEST MODE] ON")
         add_log(f"[ARDUINO TX] {command}")
         add_log(f"[ARDUINO RX] {response}")
 
