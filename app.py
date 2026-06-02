@@ -1,9 +1,12 @@
+TEST_MODE = True
+
 from flask import Flask, render_template, jsonify, request
 from lidar_data import get_lidar_points
 import json
 import os
 from datetime import datetime
 import serial
+import serial.tools.list_ports
 import time
 
 app = Flask(__name__)
@@ -42,7 +45,29 @@ connection_state = {
     "emergencyStop": True
 }
 
-ARDUINO_PORT = os.environ.get("ARDUINO_PORT", "COM3")
+def find_arduino_port():
+    ports = serial.tools.list_ports.comports()
+
+    for port in ports:
+        desc = port.description.lower()
+        hwid = port.hwid.lower()
+
+        if (
+            "arduino" in desc
+            or "ch340" in desc
+            or "ch341" in desc
+            or "usb serial" in desc
+            or "usb-serial" in desc
+            or "cp210" in desc
+            or "ttyacm" in port.device.lower()
+            or "ttyusb" in port.device.lower()
+        ):
+            print(f"[ARDUINO PORT FOUND] {port.device} - {port.description}")
+            return port.device
+
+    return None
+
+ARDUINO_PORT = os.environ.get("ARDUINO_PORT", "")
 ARDUINO_BAUD = 9600
 arduino = None
 
@@ -51,20 +76,43 @@ def connect_arduino():
     global arduino
 
     try:
-        if arduino is None or not arduino.is_open:
-            arduino = serial.Serial(ARDUINO_PORT, ARDUINO_BAUD, timeout=2)
-            time.sleep(2)
-            connection_state["arduino"] = True
-            add_log("[ARDUINO] 연결 성공")
+        if arduino is not None and arduino.is_open:
+            return True
+
+        port_name = ARDUINO_PORT
+
+        if not port_name:
+            port_name = find_arduino_port()
+
+        if not port_name:
+            connection_state["arduino"] = False
+            add_log("[ARDUINO] 포트 자동 검색 실패")
+            return False
+
+        arduino = serial.Serial(port_name, ARDUINO_BAUD, timeout=2)
+        time.sleep(2)
+
+        connection_state["arduino"] = True
+        add_log(f"[ARDUINO] 연결 성공: {port_name}")
+
         return True
 
     except Exception as e:
         connection_state["arduino"] = False
         print("[ARDUINO ERROR]", e)
+        add_log("[ARDUINO] 연결 실패")
         return False
 
 
 def send_arduino_command(command):
+    if TEST_MODE:
+        response = "AIM_OK:120"
+
+        add_log(f"[ARDUINO TX] {command}")
+        add_log(f"[ARDUINO RX] {response}")
+
+        return response
+
     if not connect_arduino():
         add_log("[ARDUINO] 연결 실패 - 명령 전송 안 됨")
         return None
