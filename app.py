@@ -3,6 +3,8 @@ from lidar_data import get_lidar_points
 import json
 import os
 from datetime import datetime
+import serial
+import time
 
 app = Flask(__name__)
 
@@ -40,6 +42,50 @@ connection_state = {
     "emergencyStop": True
 }
 
+ARDUINO_PORT = os.environ.get("ARDUINO_PORT", "COM3")
+ARDUINO_BAUD = 9600
+arduino = None
+
+
+def connect_arduino():
+    global arduino
+
+    try:
+        if arduino is None or not arduino.is_open:
+            arduino = serial.Serial(ARDUINO_PORT, ARDUINO_BAUD, timeout=2)
+            time.sleep(2)
+            connection_state["arduino"] = True
+            add_log("[ARDUINO] 연결 성공")
+        return True
+
+    except Exception as e:
+        connection_state["arduino"] = False
+        print("[ARDUINO ERROR]", e)
+        return False
+
+
+def send_arduino_command(command):
+    if not connect_arduino():
+        add_log("[ARDUINO] 연결 실패 - 명령 전송 안 됨")
+        return None
+
+    try:
+        arduino.write((command + "\n").encode())
+        arduino.flush()
+
+        response = arduino.readline().decode(errors="ignore").strip()
+
+        add_log(f"[ARDUINO TX] {command}")
+        if response:
+            add_log(f"[ARDUINO RX] {response}")
+
+        return response
+
+    except Exception as e:
+        connection_state["arduino"] = False
+        add_log("[ARDUINO] 통신 오류")
+        print("[ARDUINO SEND ERROR]", e)
+        return None
 
 def clone_default_data():
     return json.loads(json.dumps(default_data))
@@ -186,6 +232,7 @@ def fire(num):
 
     print(f"[AUTO FIRE] TARGET {num}")
     print(f"PAN={s['pan']}, TILT={s['tilt']}, POWER={s['power']}")
+    send_arduino_command(f"PAN:{s['pan']}")
 
     # 실제 아두이노 연결 시 이 위치에 Serial 전송 코드를 넣으면 됨
     # 예: TARGET:1,PAN:90,TILT:45,POWER:300
