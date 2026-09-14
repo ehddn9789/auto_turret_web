@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Auto Turret HUD</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
 
@@ -41,13 +42,19 @@
     <div class="online-box"><span class="online-dot"></span>SYSTEM ONLINE</div>
   </header>
 
-  <nav class="tabs">
-    <button class="tab-btn active" onclick="openTab('main', this)">MAIN</button>
-    <button class="tab-btn" onclick="openTab('target', this)">TARGET</button>
-    <button class="tab-btn" onclick="openTab('manual', this)">MANUAL</button>
-    <button class="tab-btn" onclick="openTab('presentation', this)">PRESENT</button>
-    <button class="tab-btn" onclick="openTab('adminGate', this)">ADMIN</button>
-  </nav>
+  <div class="tabs-wrap" id="tabsWrap">
+    <button class="tabs-toggle" onclick="toggleTabs()">
+      <span id="currentTabLabel">MAIN</span>
+      <span class="chevron">⌄</span>
+    </button>
+    <nav class="tabs" id="tabsNav">
+      <button class="tab-btn active" onclick="openTab('main', this)">MAIN</button>
+      <button class="tab-btn" onclick="openTab('target', this)">TARGET</button>
+      <button class="tab-btn" onclick="openTab('manual', this)">MANUAL</button>
+      <button class="tab-btn" onclick="openTab('presentation', this)">PRESENT</button>
+      <button class="tab-btn" onclick="openTab('adminGate', this)">ADMIN</button>
+    </nav>
+  </div>
 
   <section id="main" class="tab-content active">
     <div class="main-grid">
@@ -75,67 +82,83 @@
         </div>
       </div>
 
-      <div class="panel">
-        <h2>SYSTEM CHECKLIST</h2>
-        <div id="checklistBox" class="checklist-box"></div>
-      </div>
-
-      <div class="panel">
-        <h2>HARDWARE CONNECTION</h2>
-        <div id="connectionBox" class="connection-box"></div>
-      </div>
-
-      <div class="panel">
-        <h2>SYSTEM STATUS</h2>
-        <div class="status-list">
-          <div><span>현재 상태</span><strong id="systemState">대기 중</strong></div>
-          <div><span>선택 목표물</span><strong id="selectedTarget">없음</strong></div>
-          <div><span>자동 시연</span><strong id="demoState">OFF</strong></div>
-          <div><span>순찰 모드</span><strong id="patrolState">OFF</strong></div>
-          <div><span>수동 잠금</span><strong id="armedState">OFF</strong></div>
-          <div><span>LiDAR 상태</span><strong id="lidarState">CONNECTED</strong></div>
+      <div class="panel collapsible" id="panelStatus">
+        <h2 class="collapse-toggle" onclick="togglePanel(this)">SYSTEM STATUS<span class="chevron">⌄</span></h2>
+        <div class="collapse-body">
+          <div class="status-two-col">
+            <div>
+              <h3 class="sub-label">Checklist</h3>
+              <div id="checklistBox" class="checklist-box"></div>
+            </div>
+            <div>
+              <h3 class="sub-label">Connections</h3>
+              <div id="connectionBox" class="connection-box"></div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="panel">
-        <h2>FIRE STATS</h2>
-        <div class="stats-grid">
-          <div><span>총 발사</span><strong id="totalFire">0</strong></div>
-          <div><span>명중</span><strong id="hitCount">0</strong></div>
-          <div><span>실패</span><strong id="missCount">0</strong></div>
-          <div><span>명중률</span><strong id="hitRate">0%</strong></div>
-        </div>
-        <div class="result-buttons">
-          <button onclick="recordResult('hit')">HIT</button>
-          <button onclick="recordResult('miss')">MISS</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>FIRE SEQUENCE</h2>
-        <div class="timeline">
-          <div id="seq1">목표물 상승</div>
-          <div id="seq2">포탑 회전</div>
-          <div id="seq3">레이더 스캔</div>
-          <div id="seq4">조준선 정렬</div>
-          <div id="seq5">LOCK ON</div>
-          <div id="seq6">발사 준비</div>
-          <div id="seq7">카운트다운</div>
-          <div id="seq8">발사</div>
+      <div class="panel collapsible" id="panelState">
+        <h2 class="collapse-toggle" onclick="togglePanel(this)">SYSTEM STATE<span class="chevron">⌄</span></h2>
+        <div class="collapse-body">
+          <div class="status-list">
+            <div><span>현재 상태</span><strong id="systemState">대기 중</strong></div>
+            <div><span>선택 목표물</span><strong id="selectedTarget">없음</strong></div>
+            <div><span>자동 시연</span><strong id="demoState">OFF</strong></div>
+            <div><span>순찰 모드</span><strong id="patrolState">OFF</strong></div>
+            <div><span>수동 잠금</span><strong id="armedState">OFF</strong></div>
+            <div><span>LiDAR 상태</span><strong id="lidarState">CONNECTED</strong></div>
+          </div>
         </div>
       </div>
 
-      <div class="panel system-warning">
-        <h2>SYSTEM WARNING</h2>
-        <div class="warning-list" id="warningList">
-          <p>[OK] All systems nominal</p>
+      <div class="panel collapsible" id="panelStats">
+        <h2 class="collapse-toggle" onclick="togglePanel(this)">FIRE STATS<span class="chevron">⌄</span></h2>
+        <div class="collapse-body">
+          <div class="stats-grid">
+            <div><span>총 발사</span><strong id="totalFire">0</strong></div>
+            <div><span>명중</span><strong id="hitCount">0</strong></div>
+            <div><span>실패</span><strong id="missCount">0</strong></div>
+            <div><span>명중률</span><strong id="hitRate">0%</strong></div>
+          </div>
+          <div class="result-buttons">
+            <button onclick="recordResult('hit')">HIT</button>
+            <button onclick="recordResult('miss')">MISS</button>
+          </div>
         </div>
       </div>
 
-      <div class="panel full">
-        <h2>MISSION LOG</h2>
-        <div class="log-box" id="logBox">
-          <p>[SYSTEM] READY</p>
+      <div class="panel fire-sequence collapsible" id="panelSequence">
+        <h2 class="collapse-toggle" onclick="togglePanel(this)">FIRE SEQUENCE<span class="chevron">⌄</span></h2>
+        <div class="collapse-body">
+          <div class="timeline">
+            <div id="seq1">목표물 상승</div>
+            <div id="seq2">포탑 회전</div>
+            <div id="seq3">레이더 스캔</div>
+            <div id="seq4">조준선 정렬</div>
+            <div id="seq5">LOCK ON</div>
+            <div id="seq6">발사 준비</div>
+            <div id="seq7">카운트다운</div>
+            <div id="seq8">발사</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel system-warning collapsible" id="panelWarning">
+        <h2 class="collapse-toggle" onclick="togglePanel(this)">SYSTEM WARNING<span class="chevron">⌄</span></h2>
+        <div class="collapse-body">
+          <div class="warning-list" id="warningList">
+            <p>[OK] All systems nominal</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel full collapsible" id="panelLog">
+        <h2 class="collapse-toggle" onclick="togglePanel(this)">MISSION LOG<span class="chevron">⌄</span></h2>
+        <div class="collapse-body">
+          <div class="log-box" id="logBox">
+            <p>[SYSTEM] READY</p>
+          </div>
         </div>
       </div>
     </div>
@@ -158,6 +181,7 @@
         </div>
         <button class="demo-btn" onclick="startDemo()">AUTO DEMO MODE</button>
         <button class="patrol-btn" onclick="togglePatrol()">AUTO PATROL MODE</button>
+        <button class="patrol-btn" onclick="autoAim()">AUTO AIM (LIDAR)</button>
       </div>
 
       <div class="panel">
@@ -194,6 +218,7 @@
         <button id="armBtn" class="arm-btn" onclick="toggleArm()">ARM OFF</button>
         <button class="manual-fire-btn" onclick="manualFire()">MANUAL FIRE</button>
         <button class="stop-btn" onclick="emergencyStop()">EMERGENCY STOP</button>
+        <button class="patrol-btn" onclick="homeCalibrate()">HOME 보정</button>
       </div>
     </div>
   </section>
@@ -253,6 +278,42 @@ let manualPan = 90;
 let manualTilt = 90;
 let manualPower = 300;
 let armed = false;
+let currentPanAngle = 90;
+
+// ---------------------------------------------------------------------------
+// 웹소켓 연결 (item 5)
+// 기존에는 /lidar를 800ms마다 폴링했는데, 서버가 상태/로그가 바뀔 때마다
+// 직접 밀어주는 방식으로 바꿔서 지연을 줄이고 서버 부하도 낮춘다.
+// 소켓이 끊기면 기존 폴링 방식(updateRadar)으로 자동 대체된다.
+// ---------------------------------------------------------------------------
+const socket = io();
+let socketConnected = false;
+
+socket.on('connect', () => {
+  socketConnected = true;
+  document.getElementById('lidarState').innerText = 'CONNECTED';
+});
+
+socket.on('disconnect', () => {
+  socketConnected = false;
+  document.getElementById('lidarState').innerText = 'ERROR';
+});
+
+socket.on('lidar_update', (data) => {
+  drawRadarOn(ctx, canvas, data.points || []);
+  drawRadarOn(pCtx, pCanvas, data.points || []);
+  document.getElementById('lidarState').innerText = 'CONNECTED';
+});
+
+socket.on('state_update', (state) => {
+  currentPanAngle = state.pan;
+  updateTurretHUD(state.pan, state.tilt, state.power);
+  document.getElementById('presentMode').innerText = state.mode;
+});
+
+socket.on('log_update', (log) => {
+  addLog(`[${log.time}] ${log.message}`);
+});
 
 window.onload = () => {
   runBootScreen();
@@ -265,7 +326,25 @@ window.onload = () => {
   updateTurretHUD(90, 45, 300);
   initJoystick();
   startWarningSystem();
+  initCollapsiblePanels();
 };
+
+function togglePanel(headerEl) {
+  const panel = headerEl.closest('.panel');
+  panel.classList.toggle('collapsed');
+}
+
+function initCollapsiblePanels() {
+  // 모바일 화면에서만 부가 패널(체크리스트, 통계, 시퀀스, 경고, 로그 등)을
+  // 기본적으로 접어서, 레이더/3D HUD 같은 핵심 화면이 먼저 눈에 들어오게 한다.
+  // PC/창모드에서는 예전처럼 전부 펼쳐진 채로 보여준다.
+  if (window.innerWidth <= 640) {
+    document.querySelectorAll('.panel.collapsible').forEach(panel => {
+      panel.classList.add('collapsed');
+    });
+    document.getElementById('tabsWrap').classList.add('collapsed');
+  }
+}
 
 function runBootScreen() {
   const bootText = document.getElementById('bootText');
@@ -320,6 +399,18 @@ function openTab(tabName, btn) {
 
   btn.classList.add('active');
   resizeCanvas();
+
+  const label = document.getElementById('currentTabLabel');
+  if (label) label.innerText = btn.innerText;
+
+  // 모바일에서는 탭을 고른 뒤 다시 접어서 화면을 넓게 써요.
+  if (window.innerWidth <= 640) {
+    document.getElementById('tabsWrap').classList.add('collapsed');
+  }
+}
+
+function toggleTabs() {
+  document.getElementById('tabsWrap').classList.toggle('collapsed');
 }
 
 function addLog(text) {
@@ -439,7 +530,11 @@ async function togglePatrol() {
     document.getElementById('systemState').innerText = 'PATROL';
     addLog('[PATROL] 자동 순찰 시작');
 
-    await fetch('/patrol');
+    await fetch('/patrol', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({on: true})
+    });
 
     runPatrolAnimation();
   } else {
@@ -450,6 +545,41 @@ async function togglePatrol() {
 
     document.getElementById('systemState').innerText = '대기 중';
     addLog('[PATROL] 자동 순찰 종료');
+
+    // 이전에는 순찰을 끌 때 서버에 알리지 않아 서버 상태가 계속
+    // PATROL로 남아있었음 - 이제 명시적으로 종료를 알림
+    await fetch('/patrol', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({on: false})
+    });
+  }
+}
+
+async function autoAim() {
+  if (busy) return;
+
+  addLog('[AUTO AIM] LiDAR 최근접 물체 탐지 중');
+
+  try {
+    const res = await fetch('/auto-aim', {method: 'POST'});
+    const data = await res.json();
+
+    if (!res.ok) {
+      addWarning('[AUTO AIM] ' + (data.message || '감지 실패'));
+      return;
+    }
+
+    updateTurretHUD(data.pan, data.tilt, manualPower);
+    manualPan = data.pan;
+    manualTilt = data.tilt;
+
+    addLog(`[AUTO AIM] PAN ${data.pan}° / 거리 ${data.distance}cm${data.fired ? ' - 자동 발사됨' : ''}`);
+
+    updateStats();
+    updateLogs();
+  } catch (e) {
+    addWarning('[AUTO AIM] 요청 실패');
   }
 }
 
@@ -711,6 +841,18 @@ function emergencyStop() {
   addLog('[STOP] 긴급 정지 실행');
 }
 
+async function homeCalibrate() {
+  addLog('[HOME] 홈 위치 보정 요청');
+
+  try {
+    const res = await fetch('/home-calibrate', { method: 'POST' });
+    const data = await res.json();
+    addLog('[HOME] ' + data.message);
+  } catch (e) {
+    addWarning('[HOME] 요청 실패');
+  }
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -775,12 +917,25 @@ async function saveSetting(num) {
   });
 
   const result = await res.json();
+
+  if (!res.ok) {
+    addWarning('[SAVE] ' + (result.error || '저장 실패 - 관리자 로그인이 필요합니다'));
+    return;
+  }
+
   addLog('[SAVE] ' + result.message);
   updateLogs();
 }
 
 async function resetData() {
-  await fetch('/reset-data', {method: 'POST'});
+  const res = await fetch('/reset-data', {method: 'POST'});
+
+  if (!res.ok) {
+    const result = await res.json().catch(() => ({}));
+    addWarning('[RESET] ' + (result.error || '초기화 실패 - 관리자 로그인이 필요합니다'));
+    return;
+  }
+
   location.reload();
 }
 
@@ -989,6 +1144,7 @@ function resizeCanvas() {
 }
 
 function drawRadarOn(ctxTarget, canvasTarget, points) {
+  const radarMaxDistance = 300;
   const w = canvasTarget.width;
   const h = canvasTarget.height;
   if (w <= 0 || h <= 0) return;
@@ -999,30 +1155,57 @@ function drawRadarOn(ctxTarget, canvasTarget, points) {
   ctxTarget.clearRect(0, 0, w, h);
   ctxTarget.beginPath();
   ctxTarget.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctxTarget.strokeStyle = '#22d3ee';
-  ctxTarget.lineWidth = 2;
+  ctxTarget.strokeStyle = 'rgba(107,114,128,0.4)';
+  ctxTarget.lineWidth = 1.5;
   ctxTarget.stroke();
 
   for (let i = 1; i <= 4; i++) {
     ctxTarget.beginPath();
     ctxTarget.arc(cx, cy, radius * (i / 4), 0, Math.PI * 2);
-    ctxTarget.strokeStyle = 'rgba(34,211,238,0.25)';
+    ctxTarget.strokeStyle = 'rgba(107,114,128,0.18)';
     ctxTarget.stroke();
   }
 
   points.forEach(point => {
     const angle = (point.angle - 90) * Math.PI / 180;
-    const dist = Math.min(point.distance / 250, 1);
+    const dist = Math.min(point.distance / radarMaxDistance, 1);
     const x = cx + Math.cos(angle) * radius * dist;
     const y = cy + Math.sin(angle) * radius * dist;
     ctxTarget.beginPath();
     ctxTarget.arc(x, y, 4, 0, Math.PI * 2);
-    ctxTarget.fillStyle = '#facc15';
-    ctxTarget.shadowBlur = 10;
-    ctxTarget.shadowColor = '#facc15';
+    ctxTarget.fillStyle = '#6d28d9';
+    ctxTarget.shadowBlur = 8;
+    ctxTarget.shadowColor = 'rgba(109,40,217,0.6)';
     ctxTarget.fill();
     ctxTarget.shadowBlur = 0;
   });
+
+  const needleAngle = (currentPanAngle - 90) * Math.PI / 180;
+  const arrowLength = 22;
+  const arrowWidth = 14;
+
+  const tipX = cx + Math.cos(needleAngle) * arrowLength;
+  const tipY = cy + Math.sin(needleAngle) * arrowLength;
+
+  const backX = cx - Math.cos(needleAngle) * (arrowLength * 0.5);
+  const backY = cy - Math.sin(needleAngle) * (arrowLength * 0.5);
+
+  const perpAngle = needleAngle + Math.PI / 2;
+  const leftX = backX + Math.cos(perpAngle) * arrowWidth;
+  const leftY = backY + Math.sin(perpAngle) * arrowWidth;
+  const rightX = backX - Math.cos(perpAngle) * arrowWidth;
+  const rightY = backY - Math.sin(perpAngle) * arrowWidth;
+
+  ctxTarget.beginPath();
+  ctxTarget.moveTo(tipX, tipY);
+  ctxTarget.lineTo(leftX, leftY);
+  ctxTarget.lineTo(rightX, rightY);
+  ctxTarget.closePath();
+  ctxTarget.fillStyle = '#f43f5e';
+  ctxTarget.shadowBlur = 6;
+  ctxTarget.shadowColor = 'rgba(244,63,94,0.5)';
+  ctxTarget.fill();
+  ctxTarget.shadowBlur = 0;
 }
 
 let lidarLoading = false;
@@ -1057,6 +1240,19 @@ async function updateRadar() {
 }
 
 window.addEventListener('resize', resizeCanvas);
+
+// 페이지 최초 로드 시 레이아웃이 아직 자리잡기 전이라 캔버스 크기가
+// 0으로 측정되거나, PRESENT 탭처럼 숨겨져 있던(display:none) 요소가
+// 나중에 보일 때 크기가 바뀌는 걸 놓치는 문제가 있었다.
+// ResizeObserver로 감시해서 크기가 바뀔 때마다 자동으로 다시 계산한다.
+if (window.ResizeObserver) {
+  const radarWrapperEl = document.querySelector('.radar-wrapper');
+  const presentRadarEl = document.getElementById('presentationRadar');
+  const canvasResizeObserver = new ResizeObserver(() => resizeCanvas());
+
+  if (radarWrapperEl) canvasResizeObserver.observe(radarWrapperEl);
+  if (presentRadarEl) canvasResizeObserver.observe(presentRadarEl);
+}
 let radarTimer = null;
 let statsTimer = null;
 let checklistTimer = null;
@@ -1065,7 +1261,11 @@ let connectionTimer = null;
 function startAutoUpdate() {
   stopAutoUpdate();
 
-  radarTimer = setInterval(updateRadar, 500);
+  // 소켓이 정상 연결되어 있으면 서버가 push해주므로 폴링은 폴백 용도로만
+  // 낮은 빈도로 돌린다. 소켓이 끊겨 있으면 기존처럼 800ms마다 직접 받아온다.
+  radarTimer = setInterval(() => {
+    if (!socketConnected) updateRadar();
+  }, 800);
   statsTimer = setInterval(updateStats, 3000);
   checklistTimer = setInterval(updateChecklist, 5000);
   connectionTimer = setInterval(updateConnections, 5000);

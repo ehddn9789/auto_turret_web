@@ -1,15 +1,46 @@
 TEST_MODE = True
 
-from flask import Flask, render_template, jsonify, request
-from lidar_data import get_lidar_points
+from flask import Flask, render_template, jsonify, request, Response, session
+from flask_socketio import SocketIO
+from lidar_data import get_lidar_json
 import json
 import os
+import logging
 from datetime import datetime
 import serial
 import serial.tools.list_ports
 import time
+import threading
 
 app = Flask(__name__)
+
+# 세션(관리자 로그인 유지)에 사용되는 키.
+# 실제 운영 시에는 환경변수로 넘기는 걸 권장 (여기서는 기본값 제공).
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "auto-turret-dev-secret-change-me")
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
+# ---------------------------------------------------------------------------
+# 로깅 설정 (item 8)
+# print() 대신 표준 logging 모듈을 사용해 콘솔 + 파일(turret.log)에 동시에 남긴다.
+# 웹 UI에 보여주는 "미션 로그"는 이것과 별개로 add_log()가 계속 관리한다
+# (둘의 목적이 다름: 하나는 개발자용 디버그 로그, 하나는 사용자에게 보여주는 로그).
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("turret.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("auto_turret")
+
+# 전역 상태(current_state, data_store)와 시리얼 포트는 프로세스 내에서 공유되는
+# 자원이라, 여러 요청이 동시에 들어와도 하나씩만 처리되도록 락으로 보호한다.
+# 주의: gunicorn을 쓸 경우 반드시 --workers 1 로 실행할 것.
+# (워커가 2개 이상이면 프로세스가 나뉘어 이 락으로도 상태 공유가 안 됨)
+state_lock = threading.RLock()
 
 ADMIN_PASSWORD = "9332"
 DATA_FILE = "system_data.json"
@@ -45,6 +76,13 @@ connection_state = {
     "emergencyStop": True
 }
 
+# 순찰(patrol) 모드가 켜져 있는지 서버가 알고 있어야, 클라이언트 없이도
+# 상태를 정확히 판단할 수 있다.
+patrol_state = {
+    "active": False
+}
+
+
 def find_arduino_port():
     ports = serial.tools.list_ports.comports()
 
@@ -62,14 +100,20 @@ def find_arduino_port():
             or "ttyacm" in port.device.lower()
             or "ttyusb" in port.device.lower()
         ):
-            print(f"[ARDUINO PORT FOUND] {port.device} - {port.description}")
+            logger.info(f"[ARDUINO PORT FOUND] {port.device} - {port.description}")
             return port.device
 
     return None
 
+
 ARDUINO_PORT = os.environ.get("ARDUINO_PORT", "")
 ARDUINO_BAUD = 9600
 arduino = None
+
+# 아두이노가 1초마다 보내는 ALIVE 하트비트를 마지막으로 받은 시각.
+# 이 값이 너무 오래 갱신 안 되면 연결이 끊긴 것으로 판단한다.
+arduino_last_alive = 0.0
+ARDUINO_HEARTBEAT_TIMEOUT = 3.0
 
 
 def connect_arduino():
@@ -99,18 +143,96 @@ def connect_arduino():
 
     except Exception as e:
         connection_state["arduino"] = False
-        print("[ARDUINO ERROR]", e)
+        logger.error(f"[ARDUINO ERROR] {e}")
         add_log("[ARDUINO] 연결 실패")
         return False
 
 
+def handle_arduino_line(line):
+    """
+    아두이노가 자발적으로 보내는 줄(하트비트, 발사 완료, 안전 경고 등)을
+    처리한다. 이 함수는 항상 arduino_reader_loop()의 state_lock 안에서
+    호출되므로, 여기서 다시 state_lock을 잡아도(RLock) 문제없다.
+    """
+    global arduino_last_alive
+
+    if line == "ALIVE":
+        arduino_last_alive = time.time()
+        connection_state["arduino"] = True
+        return
+
+    if line.startswith("TARGET_SET:"):
+        # MOVE 명령(조이스틱/순찰)마다 매번 오는 일반 응답이라
+        # 미션 로그에는 남기지 않는다 (디스크 쓰기 폭주 방지).
+        return
+
+    add_log(f"[ARDUINO RX] {line}")
+
+    if line in ("OVERCURRENT_STOP", "MOVE_TIMEOUT"):
+        # 아두이노 쪽 하드웨어 안전장치가 스스로 정지한 상황.
+        # 웹 화면 상태도 이에 맞춰 정지로 동기화한다.
+        with state_lock:
+            current_state["mode"] = "STOP"
+            current_state["armed"] = False
+        add_log(f"[SAFETY] 아두이노 자동 정지: {line}")
+        broadcast_state()
+
+    elif line == "HOMED":
+        with state_lock:
+            current_state["pan"] = 0
+        broadcast_state()
+
+
+def arduino_reader_loop():
+    """
+    시리얼 포트에서 들어오는 줄을 읽는 유일한 담당자.
+    send_arduino_command()/send_move_command()는 쓰기만 하고,
+    응답 읽기는 전부 여기서 처리해서 두 곳에서 동시에 읽다가
+    응답이 꼬이는 문제를 막는다.
+    """
+    global arduino_last_alive
+
+    while True:
+        try:
+            if (
+                not TEST_MODE
+                and connection_state["arduino"]
+                and arduino_last_alive > 0
+                and (time.time() - arduino_last_alive) > ARDUINO_HEARTBEAT_TIMEOUT
+            ):
+                connection_state["arduino"] = False
+                add_log("[ARDUINO] 하트비트 끊김 - 연결 끊긴 것으로 판단")
+
+            if not TEST_MODE and arduino is not None and arduino.is_open:
+                with state_lock:
+                    if arduino.in_waiting > 0:
+                        line = arduino.readline().decode(errors="ignore").strip()
+                        if line:
+                            handle_arduino_line(line)
+
+        except Exception as e:
+            logger.error(f"[ARDUINO READ ERROR] {e}")
+
+        time.sleep(0.05)
+
+
 def send_arduino_command(command):
+    """
+    발사, 정지처럼 '의미 있는 이벤트'에 사용하는 함수.
+    미션 로그(add_log)에도 남기므로, 빈번하게 호출하면 로그가 금방 가득 차고
+    system_data.json 디스크 쓰기가 잦아진다. 실시간 이동 명령에는
+    send_move_command()를 대신 사용할 것.
+
+    실제 하드웨어 모드에서는 쓰기만 하고 바로 반환한다 (응답은
+    arduino_reader_loop()가 비동기로 받아서 로그에 남긴다). 그래서
+    반환값으로 HIT/MISS를 즉시 판정하는 건 TEST_MODE에서만 유효하다.
+    """
     if TEST_MODE:
         response = "AIM_OK:120"
 
-        print(f"[ARDUINO TEST MODE] ON")
-        print(f"[ARDUINO TX] {command}")
-        print(f"[ARDUINO RX] {response}")
+        logger.info("[ARDUINO TEST MODE] ON")
+        logger.info(f"[ARDUINO TX] {command}")
+        logger.info(f"[ARDUINO RX] {response}")
 
         add_log("[ARDUINO TEST MODE] ON")
         add_log(f"[ARDUINO TX] {command}")
@@ -122,31 +244,58 @@ def send_arduino_command(command):
         add_log("[ARDUINO] 연결 실패 - 명령 전송 안 됨")
         return None
 
-    try:
-        arduino.write((command + "\n").encode())
-        arduino.flush()
+    with state_lock:
+        try:
+            arduino.write((command + "\n").encode())
+            arduino.flush()
+            add_log(f"[ARDUINO TX] {command}")
+            return None
 
-        response = arduino.readline().decode(errors="ignore").strip()
+        except Exception as e:
+            connection_state["arduino"] = False
+            add_log("[ARDUINO] 통신 오류")
+            logger.error(f"[ARDUINO SEND ERROR] {e}")
+            return None
 
-        add_log(f"[ARDUINO TX] {command}")
-        if response:
-            add_log(f"[ARDUINO RX] {response}")
 
-        return response
+def send_move_command(pan, tilt, power):
+    """
+    수동 조작(조이스틱)이나 순찰 모드처럼 초당 여러 번 호출될 수 있는
+    '실시간 이동' 전용 함수. 미션 로그에는 남기지 않아 SD카드 쓰기 부하를
+    줄인다 (필요하면 logger 파일에는 남는다).
+    """
+    if TEST_MODE:
+        logger.debug(f"[ARDUINO MOVE TEST] PAN:{pan},TILT:{tilt},POWER:{power}")
+        return "MOVE_OK"
 
-    except Exception as e:
-        connection_state["arduino"] = False
-        add_log("[ARDUINO] 통신 오류")
-        print("[ARDUINO SEND ERROR]", e)
+    if not connect_arduino():
         return None
+
+    with state_lock:
+        try:
+            command = f"MOVE:PAN:{pan},TILT:{tilt},POWER:{power}"
+            arduino.write((command + "\n").encode())
+            arduino.flush()
+            return None
+        except Exception as e:
+            connection_state["arduino"] = False
+            logger.error(f"[ARDUINO MOVE ERROR] {e}")
+            return None
+
+
+def send_home_command():
+    """아두이노에 HOME(리미트 스위치 기준 0도 보정)을 요청한다."""
+    return send_arduino_command("HOME")
+
 
 def clone_default_data():
     return json.loads(json.dumps(default_data))
 
 
 def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with state_lock:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def load_data():
@@ -182,9 +331,101 @@ def add_log(message):
         "message": message
     }
 
-    data_store["logs"].insert(0, log)
-    data_store["logs"] = data_store["logs"][:100]
-    save_data(data_store)
+    logger.info(message)
+
+    with state_lock:
+        data_store["logs"].insert(0, log)
+        data_store["logs"] = data_store["logs"][:100]
+        save_data(data_store)
+
+    try:
+        socketio.emit("log_update", log)
+    except Exception:
+        pass
+
+
+def broadcast_state():
+    """현재 터렛 상태를 웹소켓으로 즉시 밀어준다 (item 5)."""
+    try:
+        with state_lock:
+            payload = dict(current_state)
+        socketio.emit("state_update", payload)
+    except Exception:
+        pass
+
+
+def broadcast_lidar_loop():
+    """
+    LiDAR 데이터를 주기적으로 웹소켓 push로 보내는 백그라운드 루프.
+    (이 함수를 빠뜨려서 레이더 화면 자체가 안 그려지던 문제 수정)
+    실제 LiDAR가 아직 연결 안 되어 있어도 get_lidar_json()은
+    '{"points":[]}' 를 반환하므로, 격자(원)는 정상적으로 계속 그려진다.
+    """
+    while True:
+        try:
+            data = json.loads(get_lidar_json())
+            socketio.emit("lidar_update", data)
+        except Exception as e:
+            logger.error(f"[LIDAR BROADCAST ERROR] {e}")
+        time.sleep(0.15)
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+# ---------------------------------------------------------------------------
+# LiDAR 기반 최근접 물체 탐지 / 자동 조준 (item 4)
+# ---------------------------------------------------------------------------
+def get_nearest_lidar_point():
+    try:
+        data = json.loads(get_lidar_json())
+        points = data.get("points", [])
+    except Exception:
+        return None
+
+    if not points:
+        return None
+
+    return min(points, key=lambda p: p["distance"])
+
+
+def lidar_angle_to_pan(angle):
+    """
+    LiDAR가 보고하는 각도(0~359도)를 서보 pan 값(0~180)으로 변환한다.
+    센서가 터렛 정면(0도)을 기준으로 장착되어 있다고 가정한 기본 매핑이며,
+    실제 장착 각도/방향에 따라 보정(offset)이 필요할 수 있다.
+    """
+    a = angle % 360
+    if a > 180:
+        a = 360 - a  # 반대쪽 각도는 좌우 대칭으로 미러링
+    return int(clamp(a, 0, 180))
+
+
+def auto_record_result(arduino_response):
+    """
+    아두이노가 발사 후 명중 센서(리밋 스위치, 거리 센서 등)로 판정한 결과를
+    'HIT' / 'MISS' 문자열로 포함해 응답하면, 그 값을 읽어 통계에 자동 반영한다.
+    (item 6) 아두이노 펌웨어가 이 프로토콜을 아직 구현하지 않았다면 그냥
+    무시되고, 화면의 수동 HIT/MISS 버튼으로 기존처럼 기록하면 된다.
+    TEST_MODE 응답("AIM_OK:120")에는 HIT/MISS가 없어 자동으로는 아무 일도
+    일어나지 않는다 - 실제 하드웨어 연결 후 아두이노 쪽에서
+    "...,RESULT:HIT" 같은 형식으로 응답을 보내주도록 구현하면 바로 동작한다.
+    """
+    if not arduino_response:
+        return
+
+    resp = arduino_response.upper()
+
+    with state_lock:
+        if "HIT" in resp:
+            data_store["stats"]["hit"] += 1
+            save_data(data_store)
+            add_log("[AUTO RESULT] HIT (자동 감지)")
+        elif "MISS" in resp:
+            data_store["stats"]["miss"] += 1
+            save_data(data_store)
+            add_log("[AUTO RESULT] MISS (자동 감지)")
 
 
 @app.route("/")
@@ -194,7 +435,10 @@ def home():
 
 @app.route("/lidar")
 def lidar():
-    return jsonify({"points": get_lidar_points()})
+    return Response(
+        get_lidar_json(),
+        mimetype="application/json"
+    )
 
 
 @app.route("/state")
@@ -242,23 +486,43 @@ def get_logs():
 @app.route("/record/<result>", methods=["POST"])
 def record_result(result):
     if result == "hit":
-        data_store["stats"]["hit"] += 1
+        with state_lock:
+            data_store["stats"]["hit"] += 1
+            save_data(data_store)
     elif result == "miss":
-        data_store["stats"]["miss"] += 1
+        with state_lock:
+            data_store["stats"]["miss"] += 1
+            save_data(data_store)
     else:
         return jsonify({"error": "wrong result"}), 400
 
     add_log(f"[RESULT] {result.upper()}")
-    save_data(data_store)
 
     return jsonify({"message": "recorded"})
 
 
+# ---------------------------------------------------------------------------
+# 관리자 인증 (item 1)
+# ---------------------------------------------------------------------------
+def admin_required(func):
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not session.get("is_admin"):
+            add_log("[ADMIN] 인증 없이 관리자 기능 접근 차단")
+            return jsonify({"error": "관리자 로그인이 필요합니다"}), 401
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 @app.route("/admin-login", methods=["POST"])
 def admin_login():
-    password = request.json.get("password", "")
+    password = (request.json or {}).get("password", "")
 
     if password == ADMIN_PASSWORD:
+        session["is_admin"] = True
         add_log("[ADMIN] 관리자 로그인 성공")
         return jsonify({"success": True})
 
@@ -266,50 +530,75 @@ def admin_login():
     return jsonify({"success": False}), 401
 
 
+@app.route("/admin-logout", methods=["POST"])
+def admin_logout():
+    session.pop("is_admin", None)
+    add_log("[ADMIN] 관리자 로그아웃")
+    return jsonify({"success": True})
+
+
+@app.route("/admin-status")
+def admin_status():
+    return jsonify({"isAdmin": bool(session.get("is_admin"))})
+
+
 @app.route("/fire/<int:num>")
 def fire(num):
     if num < 1 or num > 9:
         return "wrong target", 400
 
-    s = data_store["settings"][str(num)]
+    with state_lock:
+        s = data_store["settings"][str(num)]
 
-    current_state["pan"] = s["pan"]
-    current_state["tilt"] = s["tilt"]
-    current_state["power"] = s["power"]
-    current_state["target"] = num
-    current_state["mode"] = "FIRING"
-    current_state["sequence"] = "발사"
+        current_state["pan"] = s["pan"]
+        current_state["tilt"] = s["tilt"]
+        current_state["power"] = s["power"]
+        current_state["target"] = num
+        current_state["mode"] = "FIRING"
+        current_state["sequence"] = "발사"
 
-    data_store["stats"]["totalFire"] += 1
-    save_data(data_store)
+        data_store["stats"]["totalFire"] += 1
+        save_data(data_store)
 
-    print(f"[AUTO FIRE] TARGET {num}")
-    print(f"PAN={s['pan']}, TILT={s['tilt']}, POWER={s['power']}")
-    send_arduino_command(f"PAN:{s['pan']}")
+    broadcast_state()
 
-    # 실제 아두이노 연결 시 이 위치에 Serial 전송 코드를 넣으면 됨
-    # 예: TARGET:1,PAN:90,TILT:45,POWER:300
+    logger.info(f"[AUTO FIRE] TARGET {num} PAN={s['pan']} TILT={s['tilt']} POWER={s['power']}")
+
+    # pan만 보내던 것을 tilt, power까지 함께 전송
+    response = send_arduino_command(
+        f"TARGET:{num},PAN:{s['pan']},TILT:{s['tilt']},POWER:{s['power']}"
+    )
 
     add_log(f"[FIRE] TARGET {num:02d} 발사 완료")
+    auto_record_result(response)
 
-    current_state["mode"] = "STANDBY"
-    current_state["sequence"] = "대기 중"
+    with state_lock:
+        current_state["mode"] = "STANDBY"
+        current_state["sequence"] = "대기 중"
+
+    broadcast_state()
 
     return f"TARGET {num:02d} 발사 완료"
 
 
 @app.route("/manual", methods=["POST"])
 def manual_control():
-    body = request.json
+    body = request.json or {}
 
-    pan = max(0, min(180, int(body.get("pan", current_state["pan"]))))
-    tilt = max(0, min(180, int(body.get("tilt", current_state["tilt"]))))
-    power = max(50, min(3000, int(body.get("power", current_state["power"]))))
+    pan = int(clamp(int(body.get("pan", current_state["pan"])), 0, 180))
+    tilt = int(clamp(int(body.get("tilt", current_state["tilt"])), 0, 180))
+    power = int(clamp(int(body.get("power", current_state["power"])), 50, 3000))
 
-    current_state["pan"] = pan
-    current_state["tilt"] = tilt
-    current_state["power"] = power
-    current_state["mode"] = "MANUAL"
+    with state_lock:
+        current_state["pan"] = pan
+        current_state["tilt"] = tilt
+        current_state["power"] = power
+        current_state["mode"] = "MANUAL"
+
+    # 이전에는 여기서 상태만 바뀌고 실제 아두이노에는 아무 것도 전송되지
+    # 않아, 조이스틱/순찰 모드를 움직여도 물리적으로는 안 움직였다.
+    send_move_command(pan, tilt, power)
+    broadcast_state()
 
     return jsonify({
         "message": "manual updated",
@@ -324,42 +613,158 @@ def manual_fire():
     if not current_state["armed"]:
         return "ARMED OFF - 발사 차단", 403
 
-    data_store["stats"]["totalFire"] += 1
-    save_data(data_store)
+    with state_lock:
+        pan = current_state["pan"]
+        tilt = current_state["tilt"]
+        power = current_state["power"]
 
-    current_state["mode"] = "MANUAL_FIRE"
-    current_state["sequence"] = "수동 발사"
+        data_store["stats"]["totalFire"] += 1
+        save_data(data_store)
+
+        current_state["mode"] = "MANUAL_FIRE"
+        current_state["sequence"] = "수동 발사"
+
+    broadcast_state()
+
+    # 기존에는 로그만 남기고 실제 시리얼 명령이 전송되지 않았음
+    response = send_arduino_command(f"MANUAL_FIRE:PAN:{pan},TILT:{tilt},POWER:{power}")
 
     add_log("[MANUAL FIRE] 수동 발사 완료")
+    auto_record_result(response)
 
-    current_state["mode"] = "MANUAL"
-    current_state["sequence"] = "대기 중"
+    with state_lock:
+        current_state["mode"] = "MANUAL"
+        current_state["sequence"] = "대기 중"
+
+    broadcast_state()
 
     return "수동 발사 완료"
 
 
 @app.route("/arm", methods=["POST"])
 def arm_system():
-    current_state["armed"] = bool(request.json.get("armed", False))
-    add_log(f"[ARM] {'ON' if current_state['armed'] else 'OFF'}")
+    with state_lock:
+        current_state["armed"] = bool((request.json or {}).get("armed", False))
+        armed = current_state["armed"]
 
-    return jsonify({"armed": current_state["armed"]})
+    add_log(f"[ARM] {'ON' if armed else 'OFF'}")
+    broadcast_state()
+
+    return jsonify({"armed": armed})
 
 
-@app.route("/patrol")
+@app.route("/patrol", methods=["POST"])
 def patrol():
-    current_state["mode"] = "PATROL"
-    add_log("[PATROL] 자동 순찰 모드 실행")
-    return "자동 순찰 모드 실행"
+    """
+    이전에는 상태값만 'PATROL'로 바꿀 뿐, 끌 때 서버에 알리는 방법이
+    없어서 서버 쪽 상태가 영원히 PATROL로 남는 문제가 있었다.
+    이제 on/off를 명시적으로 받고, 끌 때는 중앙(90도)으로 복귀시킨다.
+    """
+    body = request.json or {}
+    on = bool(body.get("on", True))
+
+    with state_lock:
+        patrol_state["active"] = on
+        current_state["mode"] = "PATROL" if on else "STANDBY"
+        current_state["sequence"] = "자동 순찰" if on else "대기 중"
+
+    add_log(f"[PATROL] 자동 순찰 모드 {'실행' if on else '종료'}")
+
+    if not on:
+        with state_lock:
+            current_state["pan"] = 90
+            current_state["tilt"] = 45
+        send_move_command(90, 45, current_state["power"])
+
+    broadcast_state()
+
+    return jsonify({"mode": current_state["mode"], "active": on})
 
 
-@app.route("/stop")
+@app.route("/auto-aim", methods=["POST"])
+def auto_aim():
+    """
+    LiDAR로 감지된 가장 가까운 물체 방향으로 자동 조준한다 (item 4).
+    ARM이 켜져 있으면 조준 후 바로 발사까지 수행한다.
+    """
+    point = get_nearest_lidar_point()
+
+    if point is None:
+        return jsonify({"message": "감지된 물체 없음"}), 404
+
+    pan = lidar_angle_to_pan(point["angle"])
+    tilt = 45
+
+    with state_lock:
+        power = current_state["power"]
+        current_state["pan"] = pan
+        current_state["tilt"] = tilt
+        current_state["mode"] = "AUTO_AIM"
+        current_state["sequence"] = "자동 조준"
+
+    broadcast_state()
+    send_move_command(pan, tilt, power)
+    add_log(f"[AUTO AIM] 최근접 물체 각도 {point['angle']}도, 거리 {point['distance']}cm -> PAN {pan}")
+
+    fired = False
+
+    if current_state.get("armed"):
+        response = send_arduino_command(f"TARGET:AUTO,PAN:{pan},TILT:{tilt},POWER:{power}")
+        add_log("[AUTO AIM] ARM 상태 - 자동 발사 실행")
+
+        with state_lock:
+            data_store["stats"]["totalFire"] += 1
+            save_data(data_store)
+
+        auto_record_result(response)
+        fired = True
+
+    with state_lock:
+        current_state["mode"] = "STANDBY"
+        current_state["sequence"] = "대기 중"
+
+    broadcast_state()
+
+    return jsonify({
+        "message": "자동 조준 완료",
+        "pan": pan,
+        "tilt": tilt,
+        "distance": point["distance"],
+        "fired": fired
+    })
+
+
+@app.route("/stop", methods=["POST", "GET"])
 def stop():
-    current_state["mode"] = "STOP"
-    current_state["armed"] = False
-    current_state["sequence"] = "긴급 정지"
+    with state_lock:
+        current_state["mode"] = "STOP"
+        current_state["armed"] = False
+        current_state["sequence"] = "긴급 정지"
+        patrol_state["active"] = False
+
+    # 이전에는 상태만 바뀌고 실제 하드웨어에는 정지 신호가 전달되지 않았다.
+    send_arduino_command("STOP")
     add_log("[STOP] 긴급 정지")
+    broadcast_state()
+
     return "긴급 정지 완료"
+
+
+@app.route("/home-calibrate", methods=["POST"])
+def home_calibrate():
+    """
+    아두이노에 HOME 명령을 보내 리미트 스위치 기준으로 0도를 다시 잡는다.
+    (엔코더 드리프트나 재부팅 후 위치 불일치를 바로잡기 위한 캘리브레이션)
+    """
+    with state_lock:
+        current_state["mode"] = "HOMING"
+        current_state["sequence"] = "홈 위치 보정 중"
+
+    add_log("[HOME] 홈 위치 보정 시작")
+    send_home_command()
+    broadcast_state()
+
+    return jsonify({"message": "홈 위치 보정을 시작했습니다"})
 
 
 @app.route("/settings")
@@ -368,32 +773,45 @@ def get_settings():
 
 
 @app.route("/settings/<int:num>", methods=["POST"])
+@admin_required
 def save_settings(num):
     if num < 1 or num > 9:
         return jsonify({"error": "wrong target"}), 400
 
-    body = request.json
+    body = request.json or {}
 
-    data_store["settings"][str(num)] = {
-        "pan": int(body["pan"]),
-        "tilt": int(body["tilt"]),
-        "power": int(body["power"])
-    }
+    # 범위를 벗어난 값이 그대로 저장되던 문제 수정 (item 7)
+    pan = int(clamp(int(body["pan"]), 0, 180))
+    tilt = int(clamp(int(body["tilt"]), 0, 180))
+    power = int(clamp(int(body["power"]), 50, 3000))
 
-    save_data(data_store)
-    add_log(f"[SAVE] TARGET {num:02d} 설정 저장")
+    with state_lock:
+        data_store["settings"][str(num)] = {
+            "pan": pan,
+            "tilt": tilt,
+            "power": power
+        }
+        save_data(data_store)
+
+    add_log(f"[SAVE] TARGET {num:02d} 설정 저장 (PAN:{pan}, TILT:{tilt}, POWER:{power})")
 
     return jsonify({"message": f"TARGET {num:02d} 저장 완료"})
 
 
 @app.route("/reset-data", methods=["POST"])
+@admin_required
 def reset_data():
     global data_store
-    data_store = clone_default_data()
-    save_data(data_store)
+    with state_lock:
+        data_store = clone_default_data()
+        save_data(data_store)
     add_log("[SYSTEM] 데이터 초기화")
     return jsonify({"message": "데이터 초기화 완료"})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    socketio.start_background_task(broadcast_lidar_loop)
+    socketio.start_background_task(arduino_reader_loop)
+    # 이 프로젝트는 라즈베리파이 한 대에서만 개인적으로 운영하는 용도라
+    # allow_unsafe_werkzeug=True로 프로덕션 경고를 해제한다.
+    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
