@@ -502,17 +502,36 @@ def record_result(result):
 
 
 # ===========================================================================
-# 카메라(PC) 연동 - 목표물 각도 수신
-# camera_vision.py가 이 라우트로 감지한 목표물 각도를 주기적으로 보내옴.
-# HIT/MISS는 기존 /record/hit, /record/miss 라우트를 그대로 재사용함
-# (카메라 프로그램에서 이미 그렇게 호출하도록 만들어져 있음).
+# 카메라(AprilTag) 기반 TARGET 1~9 발사 흐름
+# 웹사이트의 TARGET 버튼(1~9)을 누르면, 그 번호의 AprilTag를 카메라로 찾아서
+# 자동으로 조준한 다음 발사한다. Pan은 카메라가 실시간으로 알려주고,
+# Tilt/Power는 기존처럼 관리자 설정값(admin settings)을 그대로 사용한다.
 # ===========================================================================
 
-camera_target_angles = {}   # {target_id: {"angle": float, "updated_at": "HH:MM:SS"}}
+CAMERA_PAN_OFFSET = 90.0        # 카메라 정면 = pan 90도라고 가정 (장착 방향 다르면 조정)
+CAMERA_AIM_TIMEOUT = 5.0        # 초 - 이 시간 안에 태그를 못 찾으면 발사 취소
+CAMERA_AIM_SETTLE_TIME = 1.5    # 초 - 조준 명령 보낸 뒤 실제로 움직일 시간을 기다림
+
+
+def camera_angle_to_pan(camera_angle):
+    pan = CAMERA_PAN_OFFSET + camera_angle
+    return clamp(pan, 0, 180)
+
+
+# 카메라 자동조준 상태
+camera_aim_state = {
+    "active": False,
+    "target_id": None,
+}
+
+# {target_id: {"angle": float, "updated_at": "HH:MM:SS", "ts": epoch float}}
+camera_target_angles = {}
 
 
 @app.route("/camera/target-angle", methods=["POST"])
 def camera_target_angle():
+    """camera_vision.py가 주기적으로 호출. 지금 추적 대상으로 지정된
+    태그의 각도일 때만 실제로 터렛을 움직인다."""
     body = request.json or {}
 
     try:
@@ -521,19 +540,34 @@ def camera_target_angle():
     except (KeyError, TypeError, ValueError):
         return jsonify({"error": "target_id, angle 필요"}), 400
 
+    now = time.time()
+
     with state_lock:
         camera_target_angles[target_id] = {
             "angle": angle,
             "updated_at": datetime.now().strftime("%H:%M:%S"),
+            "ts": now,
         }
+        should_move = (
+            camera_aim_state["active"]
+            and camera_aim_state["target_id"] == target_id
+        )
 
-    # 웹 화면에서 실시간으로 쓸 수 있게 소켓으로도 방송
     try:
         socketio.emit("camera_update", {"target_id": target_id, "angle": angle})
     except Exception:
         pass
 
-    return jsonify({"message": "ok"})
+    if should_move:
+        pan = int(camera_angle_to_pan(angle))
+        with state_lock:
+            tilt = current_state["tilt"]
+            power = current_state["power"]
+            current_state["pan"] = pan
+        send_move_command(pan, tilt, power)
+        broadcast_state()
+
+    return jsonify({"message": "ok", "moved": should_move})
 
 
 @app.route("/camera/target-angles")
@@ -584,32 +618,74 @@ def admin_status():
 
 @app.route("/fire/<int:num>")
 def fire(num):
+    """
+    TARGET 버튼(1~9) 클릭 시 실행되는 흐름:
+      1. 해당 번호의 AprilTag를 카메라 자동조준 대상으로 지정
+      2. 카메라가 그 태그를 인식해서 각도를 보내올 때까지 대기(최대 5초)
+      3. 인식되면 그 각도로 이동시키고, 움직일 시간 잠깐 대기
+      4. 발사 (Tilt/Power는 관리자 설정값 그대로 사용)
+      5. 시간 안에 태그를 못 찾으면 발사하지 않고 취소
+    """
     if num < 1 or num > 9:
         return "wrong target", 400
 
     with state_lock:
         s = data_store["settings"][str(num)]
+        tilt = s["tilt"]
+        power = s["power"]
 
-        current_state["pan"] = s["pan"]
-        current_state["tilt"] = s["tilt"]
-        current_state["power"] = s["power"]
+        camera_aim_state["active"] = True
+        camera_aim_state["target_id"] = num
         current_state["target"] = num
+        current_state["mode"] = "CAMERA_AIMING"
+        current_state["sequence"] = f"{num}번 태그 탐색 중"
+
+    broadcast_state()
+    add_log(f"[CAMERA AIM] TARGET {num:02d} - AprilTag 탐색 시작")
+
+    # 이 시점 이후에 새로 들어오는 각도만 "이번 조준 시도의 결과"로 인정.
+    # (이전에 저장되어 있던 오래된 각도값을 잘못 재사용하는 것 방지)
+    request_start_ts = time.time()
+    deadline = request_start_ts + CAMERA_AIM_TIMEOUT
+    found = False
+
+    while time.time() < deadline:
+        with state_lock:
+            info = camera_target_angles.get(num)
+
+        if info is not None and info["ts"] > request_start_ts:
+            found = True
+            break
+
+        time.sleep(0.1)
+
+    with state_lock:
+        camera_aim_state["active"] = False
+
+    if not found:
+        with state_lock:
+            current_state["mode"] = "STANDBY"
+            current_state["sequence"] = "대기 중"
+        broadcast_state()
+        add_log(f"[CAMERA AIM] TARGET {num:02d} - 태그를 찾지 못함, 발사 취소")
+        return jsonify({"error": f"TARGET {num:02d} AprilTag를 찾지 못했습니다"}), 404
+
+    # 조준 명령이 나간 뒤 실제로 모터가 움직일 시간을 기다림
+    time.sleep(CAMERA_AIM_SETTLE_TIME)
+
+    with state_lock:
+        pan = current_state["pan"]
         current_state["mode"] = "FIRING"
         current_state["sequence"] = "발사"
-
         data_store["stats"]["totalFire"] += 1
         save_data(data_store)
 
     broadcast_state()
 
-    logger.info(f"[AUTO FIRE] TARGET {num} PAN={s['pan']} TILT={s['tilt']} POWER={s['power']}")
-
-    # pan만 보내던 것을 tilt, power까지 함께 전송
     response = send_arduino_command(
-        f"TARGET:{num},PAN:{s['pan']},TILT:{s['tilt']},POWER:{s['power']}"
+        f"TARGET:{num},PAN:{pan},TILT:{tilt},POWER:{power}"
     )
-
-    add_log(f"[FIRE] TARGET {num:02d} 발사 완료")
+    add_log(f"[FIRE] TARGET {num:02d} (AprilTag 자동조준) 발사 완료")
     auto_record_result(response)
 
     with state_lock:
@@ -618,7 +694,7 @@ def fire(num):
 
     broadcast_state()
 
-    return f"TARGET {num:02d} 발사 완료"
+    return f"TARGET {num:02d} 발사 완료 (AprilTag 조준)"
 
 
 @app.route("/manual", methods=["POST"])

@@ -18,12 +18,21 @@
 ## 중요한 설계 결정 (반드시 지켜야 함)
 
 - **Tilt 축은 실질적으로 없는 것으로 취급**: 터렛은 항상 최대 높이(고정)로
-  준비, 목표물은 항상 최저 높이에 배치. 자동조준은 **Pan(좌우)만** LiDAR로
-  처리한다. **카메라 추가 확정** — PC에서 웹캠 + AprilTag(tag36h11)로
-  목표물(태그 ID 1~9번)을 인식해 좌우 각도를 라즈베리파이로 전송하는 방식.
-  `app.py`에 `/camera/target-angle`(POST), `/camera/target-angles`(GET)
-  라우트 있음. PC측 인식 프로그램(`camera_vision.py`)은 별도 관리, 이
-  저장소에는 포함하지 않음.
+  준비, 목표물은 항상 최저 높이에 배치. 자동조준은 **Pan(좌우)만** 처리한다
+  (LiDAR 또는 카메라).
+- **카메라 추가 확정, TARGET 버튼(1~9) 발사 흐름이 카메라 기반으로 교체됨**
+  (2026-09-23): PC에서 웹캠 + AprilTag(tag36h11)로 목표물(태그 ID 1~9번)을
+  인식해 좌우 각도를 라즈베리파이로 전송한다. `/fire/<num>` 클릭 시:
+  1) 해당 번호를 카메라 자동조준 대상으로 지정(`camera_aim_state`) →
+  2) 카메라가 그 태그를 인식해 각도를 보내올 때까지 최대
+     `CAMERA_AIM_TIMEOUT=5초` 대기 → 3) 인식되면 그 각도로 이동, `CAMERA_
+     AIM_SETTLE_TIME=1.5초` 대기 → 4) 발사(Tilt/Power는 관리자 설정값
+     그대로 사용) → 5) 시간 안에 태그를 못 찾으면 발사하지 않고 취소(404).
+  **즉 카메라가 연결되어 있지 않으면 TARGET 버튼을 눌러도 항상 5초 뒤
+  타임아웃되고 발사되지 않는다** — 더 이상 프리셋 각도로 즉시 발사하지
+  않음. `app.py`에 `/camera/target-angle`(POST, camera_vision.py가 호출),
+  `/camera/target-angles`(GET) 라우트 있음. PC측 인식 프로그램
+  (`camera_vision.py`)은 별도 관리, 이 저장소에는 포함하지 않음.
 - **실제 발사(에어밸브)는 PLC가 담당**한다. Arduino/RPi는 조준(Pan 각도
   이동)만 하고 발사 로직은 없음. 구조: `PLC(READY) → RPi → Arduino(조준,
   AIM_OK) → PLC(FIRE_REQUEST 받아 솔레노이드 발사)`.
