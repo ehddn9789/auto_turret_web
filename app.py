@@ -501,6 +501,46 @@ def record_result(result):
     return jsonify({"message": "recorded"})
 
 
+# ===========================================================================
+# 카메라(PC) 연동 - 목표물 각도 수신
+# camera_vision.py가 이 라우트로 감지한 목표물 각도를 주기적으로 보내옴.
+# HIT/MISS는 기존 /record/hit, /record/miss 라우트를 그대로 재사용함
+# (카메라 프로그램에서 이미 그렇게 호출하도록 만들어져 있음).
+# ===========================================================================
+
+camera_target_angles = {}   # {target_id: {"angle": float, "updated_at": "HH:MM:SS"}}
+
+
+@app.route("/camera/target-angle", methods=["POST"])
+def camera_target_angle():
+    body = request.json or {}
+
+    try:
+        target_id = int(body["target_id"])
+        angle = float(body["angle"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "target_id, angle 필요"}), 400
+
+    with state_lock:
+        camera_target_angles[target_id] = {
+            "angle": angle,
+            "updated_at": datetime.now().strftime("%H:%M:%S"),
+        }
+
+    # 웹 화면에서 실시간으로 쓸 수 있게 소켓으로도 방송
+    try:
+        socketio.emit("camera_update", {"target_id": target_id, "angle": angle})
+    except Exception:
+        pass
+
+    return jsonify({"message": "ok"})
+
+
+@app.route("/camera/target-angles")
+def get_camera_target_angles():
+    return jsonify(camera_target_angles)
+
+
 # ---------------------------------------------------------------------------
 # 관리자 인증 (item 1)
 # ---------------------------------------------------------------------------

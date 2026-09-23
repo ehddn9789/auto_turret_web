@@ -19,8 +19,11 @@
 
 - **Tilt 축은 실질적으로 없는 것으로 취급**: 터렛은 항상 최대 높이(고정)로
   준비, 목표물은 항상 최저 높이에 배치. 자동조준은 **Pan(좌우)만** LiDAR로
-  처리한다. 카메라 추가 여부는 미정(교수 확인 중) — 카메라 없으면 이 방침
-  유지.
+  처리한다. **카메라 추가 확정** — PC에서 웹캠 + AprilTag(tag36h11)로
+  목표물(태그 ID 1~9번)을 인식해 좌우 각도를 라즈베리파이로 전송하는 방식.
+  `app.py`에 `/camera/target-angle`(POST), `/camera/target-angles`(GET)
+  라우트 있음. PC측 인식 프로그램(`camera_vision.py`)은 별도 관리, 이
+  저장소에는 포함하지 않음.
 - **실제 발사(에어밸브)는 PLC가 담당**한다. Arduino/RPi는 조준(Pan 각도
   이동)만 하고 발사 로직은 없음. 구조: `PLC(READY) → RPi → Arduino(조준,
   AIM_OK) → PLC(FIRE_REQUEST 받아 솔레노이드 발사)`.
