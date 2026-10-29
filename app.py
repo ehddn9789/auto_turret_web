@@ -1,4 +1,8 @@
-TEST_MODE = True
+import os as _os
+
+# 환경변수 TURRET_TEST_MODE=0 이면 실제 아두이노에 연결, 그 외(기본)에는 목업 모드.
+# PC 예: PowerShell에서  $env:TURRET_TEST_MODE="0"; $env:ARDUINO_PORT="COM4"; python app.py
+TEST_MODE = _os.environ.get("TURRET_TEST_MODE", "1") != "0"
 
 from flask import Flask, render_template, jsonify, request, Response, session
 from flask_socketio import SocketIO
@@ -108,6 +112,24 @@ def find_arduino_port():
 
 ARDUINO_PORT = os.environ.get("ARDUINO_PORT", "")
 ARDUINO_BAUD = 9600
+
+# 아두이노 스케치(v9)의 LEFT_LIMIT_ANGLE / RIGHT_LIMIT_ANGLE / SOFT_MARGIN_DEG 와 맞출 것.
+# HOME 이 끝났을 때 포의 실제 각도(왼쪽 리밋 스위치 위치)와, 아두이노가 PAN 을 받아주는 범위.
+HOME_ANGLE = 53.5
+PAN_MIN_ANGLE = 57     # LEFT_LIMIT_ANGLE(53.5) + SOFT_MARGIN_DEG(3) = 56.5 -> 정수로 올림
+PAN_MAX_ANGLE = 144    # RIGHT_LIMIT_ANGLE(147.2) - SOFT_MARGIN_DEG(3) = 144.2 -> 정수로 내림
+
+# 아두이노가 스스로 멈췄다는 뜻의 응답들 (웹 화면 상태도 정지로 맞춘다)
+ARDUINO_STOP_ERRORS = (
+    "OVERCURRENT_STOP",
+    "MOVE_TIMEOUT",
+    "ERROR_ENCODER_STALL",
+    "ERROR_ENCODER_DIRECTION",
+    "ERROR_LIMIT_LEFT",
+    "ERROR_LIMIT_RIGHT",
+    "ERROR_HOMING_TIMEOUT",
+    "ERROR_CAL_TIMEOUT",
+)
 arduino = None
 
 # 아두이노가 1초마다 보내는 ALIVE 하트비트를 마지막으로 받은 시각.
@@ -168,18 +190,47 @@ def handle_arduino_line(line):
 
     add_log(f"[ARDUINO RX] {line}")
 
-    if line in ("OVERCURRENT_STOP", "MOVE_TIMEOUT"):
-        # 아두이노 쪽 하드웨어 안전장치가 스스로 정지한 상황.
+    if line.startswith(ARDUINO_STOP_ERRORS):
+        # 아두이노 쪽 안전장치(과전류, 엔코더 이상, 리밋 스위치 등)가 스스로 정지한 상황.
         # 웹 화면 상태도 이에 맞춰 정지로 동기화한다.
         with state_lock:
             current_state["mode"] = "STOP"
             current_state["armed"] = False
+            current_state["sequence"] = f"아두이노 정지: {line}"
         add_log(f"[SAFETY] 아두이노 자동 정지: {line}")
+        broadcast_state()
+
+    elif line == "ERROR_NOT_HOMED":
+        with state_lock:
+            current_state["sequence"] = "HOME 보정이 필요합니다"
+        add_log("[SAFETY] HOME 보정 전에는 PAN 이동이 거부됩니다")
+        broadcast_state()
+
+    elif line.startswith("AIM_FAIL"):
+        # 보정 횟수를 다 써도 목표 각도에 못 들어옴 -> 실제로 선 각도를 반영
+        with state_lock:
+            try:
+                current_state["pan"] = int(round(float(line.split(":", 1)[1])))
+            except Exception:
+                pass
+            current_state["sequence"] = "조준 실패 (목표 각도에 못 들어옴)"
+        add_log("[AIM] 조준 실패 - 보정 한도 초과")
+        broadcast_state()
+
+    elif line.startswith("AIM_OK:"):
+        # 아두이노가 실제로 선 각도를 알려주므로 화면 PAN 값을 그에 맞춘다
+        with state_lock:
+            try:
+                current_state["pan"] = int(round(float(line.split(":", 1)[1])))
+            except Exception:
+                pass
         broadcast_state()
 
     elif line == "HOMED":
         with state_lock:
-            current_state["pan"] = 0
+            current_state["pan"] = int(round(HOME_ANGLE))
+            current_state["mode"] = "STANDBY"
+            current_state["sequence"] = "대기 중"
         broadcast_state()
 
 
@@ -701,7 +752,8 @@ def fire(num):
 def manual_control():
     body = request.json or {}
 
-    pan = int(clamp(int(body.get("pan", current_state["pan"])), 0, 180))
+    # 아두이노가 받아주는 범위(PAN_MIN_ANGLE~PAN_MAX_ANGLE)로 미리 제한해서 화면 값과 실제가 어긋나지 않게 함
+    pan = int(clamp(int(body.get("pan", current_state["pan"])), PAN_MIN_ANGLE, PAN_MAX_ANGLE))
     tilt = int(clamp(int(body.get("tilt", current_state["tilt"])), 0, 180))
     power = int(clamp(int(body.get("power", current_state["power"])), 50, 3000))
 

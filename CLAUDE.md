@@ -52,8 +52,9 @@ lidar_reader.py (YDLidar SDK) → 공유메모리(lidar_shared.py) → app.py
                                           templates/index.html (프론트)
 ```
 
-- `app.py`: Flask 서버. `TEST_MODE = True`면 아두이노/라이더 없이 목업으로
-  동작. 실제 배포는 `systemd`(`auto_turret.service`,
+- `app.py`: Flask 서버. `TEST_MODE`가 켜져 있으면 아두이노/라이더 없이 목업으로
+  동작. 기본은 목업이고, 환경변수 `TURRET_TEST_MODE=0`으로 실제 아두이노에
+  연결한다(포트는 `ARDUINO_PORT`, 라즈베리파이는 보통 `/dev/ttyACM0`, PC는 `COM4` 등). 실제 배포는 `systemd`(`auto_turret.service`,
   `auto_turret_lidar.service`)로 라즈베리파이에서 `python3 app.py` 직접
   실행 (gunicorn 아님, `socketio.run(..., allow_unsafe_werkzeug=True)`).
 - `state_lock`(threading.RLock)으로 전역 상태/시리얼 접근 동기화. 여러
@@ -88,7 +89,14 @@ TARGET_SET:xx   # 새 목표각 수신 (RPi 로그에는 안 남김, 너무 잦�
 AIM_OK:xx       # 목표각 도달
 STOPPED / ZERO_SET / HOMED / HOMING_START
 ERROR_BAD_VALUE:.. / OVERCURRENT_STOP / MOVE_TIMEOUT
+AIM_FAIL:xx     # 보정을 다 써도 허용 오차 안에 못 들어옴 (xx = 실제로 선 각도)
+ERROR_NOT_HOMED / ERROR_ENCODER_STALL / ERROR_ENCODER_DIRECTION
+ERROR_LIMIT_LEFT / ERROR_LIMIT_RIGHT / ERROR_HOMING_TIMEOUT / ERROR_CAL_TIMEOUT
+NUDGE:.. / STALL_RETRY:.. / CAL_*   # 보정·걸림 재시도·스위치 각도 측정 진단 출력
 ```
+`HOME` 후 각도는 `HOME_ANGLE`(app.py, 현재 53.5°, 정면=90° 기준)이고, 웹의 수동 PAN은
+`PAN_MIN_ANGLE`~`PAN_MAX_ANGLE`(57~144)로 제한된다. 아두이노 스케치의
+`LEFT_LIMIT_ANGLE` / `RIGHT_LIMIT_ANGLE`을 바꾸면 이 값들도 같이 바꿀 것.
 
 ## Arduino 스케치 (`DW_JJ_Arduino.ino`) 핵심 사항
 
