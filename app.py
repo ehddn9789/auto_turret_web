@@ -7,6 +7,7 @@ TEST_MODE = _os.environ.get("TURRET_TEST_MODE", "1") != "0"
 from flask import Flask, render_template, jsonify, request, Response, session
 from flask_socketio import SocketIO
 from lidar_data import get_lidar_json
+import plc_client
 import json
 import os
 import logging
@@ -132,6 +133,36 @@ ARDUINO_STOP_ERRORS = (
 )
 arduino = None
 
+# 가장 최근 조준 결과 (아두이노의 AIM_OK / AIM_FAIL / 정지 오류 응답).
+# /fire 가 TARGET 명령을 보낸 뒤 이 값이 바뀌길 기다렸다가 PLC 에 발사를 요청한다.
+# status: None(아직 없음) | "ok" | "fail" | "error"
+aim_state = {"status": None, "angle": None, "ts": 0.0, "detail": ""}
+
+# ---------------------------------------------------------------------------
+# PLC (미쓰비시 Q04UDV) 연결
+#   TURRET_PLC_MODE = mock(기본) | real     TEST_MODE 가 켜져 있으면 항상 mock
+#   PLC_IP (기본 192.168.0.10), PLC_PORT (기본 5000, PLC 쪽 Host Station Port 1388h)
+#   TURRET_PLC_MOCK_FAIL = notready | nostart | error | timeout  (mock 오류 시험용)
+# ---------------------------------------------------------------------------
+PLC_MODE = os.environ.get("TURRET_PLC_MODE", "mock").strip().lower()
+PLC_IP = os.environ.get("PLC_IP", "192.168.0.10")
+PLC_PORT = int(os.environ.get("PLC_PORT", "5000"))
+
+AIM_CONFIRM_TIMEOUT = 6.0   # TARGET 명령 후 AIM_OK 를 기다리는 최대 시간(초)
+AIM_ANGLE_TOLERANCE = 2.0   # AIM_OK 각도가 요청 각도와 이 값 이내여야 인정 (이전 MOVE 의 늦은 응답 거름)
+
+fire_lock = threading.Lock()  # 발사 절차는 한 번에 하나만
+
+
+def create_plc():
+    if TEST_MODE or PLC_MODE != "real":
+        return plc_client.MockPlc(fail=os.environ.get("TURRET_PLC_MOCK_FAIL", ""))
+    return plc_client.MelsecPlc(PLC_IP, PLC_PORT)
+
+
+plc = create_plc()
+plc_status = {"connected": False, "mock": plc.is_mock, "detail": "확인 전"}
+
 # 아두이노가 1초마다 보내는 ALIVE 하트비트를 마지막으로 받은 시각.
 # 이 값이 너무 오래 갱신 안 되면 연결이 끊긴 것으로 판단한다.
 arduino_last_alive = 0.0
@@ -194,6 +225,7 @@ def handle_arduino_line(line):
         # 아두이노 쪽 안전장치(과전류, 엔코더 이상, 리밋 스위치 등)가 스스로 정지한 상황.
         # 웹 화면 상태도 이에 맞춰 정지로 동기화한다.
         with state_lock:
+            aim_state.update(status="error", angle=None, ts=time.time(), detail=line)
             current_state["mode"] = "STOP"
             current_state["armed"] = False
             current_state["sequence"] = f"아두이노 정지: {line}"
@@ -209,6 +241,7 @@ def handle_arduino_line(line):
     elif line.startswith("AIM_FAIL"):
         # 보정 횟수를 다 써도 목표 각도에 못 들어옴 -> 실제로 선 각도를 반영
         with state_lock:
+            aim_state.update(status="fail", angle=None, ts=time.time(), detail=line)
             try:
                 current_state["pan"] = int(round(float(line.split(":", 1)[1])))
             except Exception:
@@ -221,7 +254,9 @@ def handle_arduino_line(line):
         # 아두이노가 실제로 선 각도를 알려주므로 화면 PAN 값을 그에 맞춘다
         with state_lock:
             try:
-                current_state["pan"] = int(round(float(line.split(":", 1)[1])))
+                angle = float(line.split(":", 1)[1])
+                current_state["pan"] = int(round(angle))
+                aim_state.update(status="ok", angle=angle, ts=time.time(), detail=line)
             except Exception:
                 pass
         broadcast_state()
@@ -667,6 +702,36 @@ def admin_status():
     return jsonify({"isAdmin": bool(session.get("is_admin"))})
 
 
+def wait_for_aim(pan, since_ts, timeout):
+    """TARGET 명령(since_ts 이후)에 대한 아두이노의 조준 결과를 기다린다.
+
+    돌려주는 값: (성공 여부, 실제 각도 또는 None, 실패 이유)
+    요청 각도와 크게 다른 AIM_OK 는 이전 MOVE 명령의 늦은 응답일 수 있어 무시한다.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with state_lock:
+            st = dict(aim_state)
+        if st["ts"] >= since_ts:
+            if st["status"] == "ok" and abs(st["angle"] - pan) <= AIM_ANGLE_TOLERANCE:
+                return True, st["angle"], ""
+            if st["status"] == "fail":
+                return False, None, "조준 실패 (목표 각도에 못 들어옴)"
+            if st["status"] == "error":
+                return False, None, f"아두이노 정지: {st['detail']}"
+        time.sleep(0.05)
+    return False, None, "조준 완료(AIM_OK) 신호를 받지 못함"
+
+
+def _fire_abort(num, message, http_status):
+    with state_lock:
+        current_state["mode"] = "STANDBY"
+        current_state["sequence"] = "대기 중"
+    broadcast_state()
+    add_log(f"[FIRE] TARGET {num:02d} 취소 - {message}")
+    return jsonify({"error": f"TARGET {num:02d} 발사 취소: {message}"}), http_status
+
+
 @app.route("/fire/<int:num>")
 def fire(num):
     """
@@ -674,12 +739,24 @@ def fire(num):
       1. 해당 번호의 AprilTag를 카메라 자동조준 대상으로 지정
       2. 카메라가 그 태그를 인식해서 각도를 보내올 때까지 대기(최대 5초)
       3. 인식되면 그 각도로 이동시키고, 움직일 시간 잠깐 대기
-      4. 발사 (Tilt/Power는 관리자 설정값 그대로 사용)
-      5. 시간 안에 태그를 못 찾으면 발사하지 않고 취소
+      4. 아두이노에 TARGET 명령을 보내고 AIM_OK(조준 완료)를 기다림
+      5. PLC 에 발사 요청(M3 조준 완료 + M4 발사 요청) -> PLC 가 실린더/에어밸브 시퀀스 수행
+         -> M5(발사 완료)를 받으면 끝. (Tilt/Power는 관리자 설정값 그대로 사용)
+      6. 어느 단계든 실패하면 발사하지 않고 취소
     """
     if num < 1 or num > 9:
         return "wrong target", 400
 
+    if not fire_lock.acquire(blocking=False):
+        return jsonify({"error": "다른 발사 절차가 진행 중입니다"}), 409
+
+    try:
+        return _do_fire(num)
+    finally:
+        fire_lock.release()
+
+
+def _do_fire(num):
     with state_lock:
         s = data_store["settings"][str(num)]
         tilt = s["tilt"]
@@ -724,19 +801,53 @@ def fire(num):
     # 조준 명령이 나간 뒤 실제로 모터가 움직일 시간을 기다림
     time.sleep(CAMERA_AIM_SETTLE_TIME)
 
+    # --- 아두이노 조준 확인 -------------------------------------------------
     with state_lock:
         pan = current_state["pan"]
-        current_state["mode"] = "FIRING"
-        current_state["sequence"] = "발사"
-        data_store["stats"]["totalFire"] += 1
-        save_data(data_store)
+        current_state["mode"] = "AIMING"
+        current_state["sequence"] = "조준 확인 중"
+        aim_state.update(status=None, angle=None, ts=0.0, detail="")
 
     broadcast_state()
 
+    send_ts = time.time()
     response = send_arduino_command(
         f"TARGET:{num},PAN:{pan},TILT:{tilt},POWER:{power}"
     )
-    add_log(f"[FIRE] TARGET {num:02d} (AprilTag 자동조준) 발사 완료")
+
+    aimed_angle = pan
+    if TEST_MODE:
+        pass  # 목업 아두이노는 항상 즉시 AIM_OK 를 돌려준다
+    else:
+        if not connection_state["arduino"]:
+            return _fire_abort(num, "아두이노와 통신할 수 없음", 503)
+        ok, angle, why = wait_for_aim(pan, send_ts, AIM_CONFIRM_TIMEOUT)
+        if not ok:
+            return _fire_abort(num, why, 500)
+        aimed_angle = angle
+
+    # --- PLC 발사 -----------------------------------------------------------
+    with state_lock:
+        current_state["mode"] = "FIRING"
+        current_state["sequence"] = "PLC 발사 중"
+
+    broadcast_state()
+
+    # 블로킹 구간이라 state_lock 을 잡지 않는다 (아두이노 읽기 스레드가 막히지 않게)
+    result = plc_client.run_fire_sequence(
+        plc, num, aimed_angle, tilt, power, log=add_log
+    )
+
+    if not result.ok:
+        add_log(f"[PLC] 발사 실패 ({result.stage}): {result.message}")
+        http_status = {"comm": 503, "check": 409, "ready": 409}.get(result.stage, 500)
+        return _fire_abort(num, result.message, http_status)
+
+    with state_lock:
+        data_store["stats"]["totalFire"] += 1
+        save_data(data_store)
+
+    add_log(f"[FIRE] TARGET {num:02d} (AprilTag 자동조준 + PLC) 발사 완료")
     auto_record_result(response)
 
     with state_lock:
@@ -746,6 +857,28 @@ def fire(num):
     broadcast_state()
 
     return f"TARGET {num:02d} 발사 완료 (AprilTag 조준)"
+
+
+def plc_status_loop():
+    """1초마다 PLC 상태를 읽어 연결 표시(connection_state)를 갱신한다."""
+    while True:
+        try:
+            st = plc_client.read_status(plc)
+            connection_state["plc"] = True
+            # M0(시스템 준비)가 꺼져 있으면 비상정지가 눌린 것으로 본다
+            connection_state["emergencyStop"] = bool(st["system_ready"])
+            plc_status.update(connected=True, detail="정상", **{"status": st})
+        except plc_client.PlcError as e:
+            connection_state["plc"] = False
+            plc_status.update(connected=False, detail=str(e), status=None)
+        except Exception as e:  # 읽기 스레드는 어떤 경우에도 죽지 않게
+            logger.error(f"[PLC STATUS ERROR] {e}")
+        time.sleep(1.0)
+
+
+@app.route("/plc/status")
+def plc_status_route():
+    return jsonify(plc_status)
 
 
 @app.route("/manual", methods=["POST"])
@@ -980,6 +1113,11 @@ def reset_data():
 if __name__ == "__main__":
     socketio.start_background_task(broadcast_lidar_loop)
     socketio.start_background_task(arduino_reader_loop)
+    socketio.start_background_task(plc_status_loop)
+    add_log(
+        "[PLC] MOCK 모드 (PLC 없이 가짜 응답)" if plc.is_mock
+        else f"[PLC] 실제 PLC 연결 시도: {PLC_IP}:{PLC_PORT}"
+    )
     # 이 프로젝트는 라즈베리파이 한 대에서만 개인적으로 운영하는 용도라
     # allow_unsafe_werkzeug=True로 프로덕션 경고를 해제한다.
     socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)

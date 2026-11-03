@@ -36,9 +36,27 @@
 - **실제 발사(에어밸브)는 PLC가 담당**한다. Arduino/RPi는 조준(Pan 각도
   이동)만 하고 발사 로직은 없음. 구조: `PLC(READY) → RPi → Arduino(조준,
   AIM_OK) → PLC(FIRE_REQUEST 받아 솔레노이드 발사)`.
-- PLC I/O 예시(확정 아님, 실제 배선 시 재확인 필요): M0 SYSTEM_READY,
-  M1 AUTO_MODE, M2 FIRE_READY, M3 AIM_OK, D0 TARGET_NO, D1 PAN_ANGLE,
-  D2 TILT_ANGLE, D3 POWER.
+- **PLC 통신** (`plc_client.py`, 외부 라이브러리 없이 MC 프로토콜 3E 바이너리/TCP를
+  직접 구현. PLC 쪽: 내장 이더넷 포트, Binary, TCP + MC Protocol, Host Port 1388h=5000).
+  `/fire/<num>` 은 카메라 각도 → 아두이노 `TARGET` → **AIM_OK 대기**(±2° 이내, 6초)
+  → PLC 핸드셰이크 순으로 진행한다. 아두이노 조준 실패/타임아웃이면 PLC를 건드리지
+  않고 취소.
+  - RPi → PLC: D0 목표번호, D1 Pan×10, D2 Tilt, D3 발사 시간(ms, PLC에서 10~3000으로
+    제한), M3 조준 완료, M4 발사 요청 (M5는 요청 전에 RPi가 0으로 지움)
+  - PLC → RPi: M0 시스템 준비, M1 자동 모드, M2 발사 준비(이게 켜져야 요청 가능),
+    M5 발사 완료, M10 오류, M11 진행 중, D20 오류 코드(1 전진 시간초과, 3 후진
+    시간초과, 4 비상정지). M3/M4는 PLC가 끝나면 스스로 끈다.
+  - 실패 시 RPi가 M4, M3를 0으로 되돌려 요청을 거둔다. 발사 성공(M5)일 때만 totalFire 증가.
+  - 환경변수: `TURRET_PLC_MODE=mock|real`(기본 mock, TEST_MODE면 항상 mock),
+    `PLC_IP`(기본 192.168.0.10), `PLC_PORT`(기본 5000),
+    `TURRET_PLC_MOCK_FAIL=notready|nostart|error|timeout`(mock 오류 시험용).
+  - `/plc/status` 로 연결/신호 상태 확인. 1초 주기로 읽어 `connection_state["plc"]`와
+    `["emergencyStop"]`(M0 기준)을 갱신한다.
+  - 출력은 편솔(스프링 복귀): Y2D 실린더(장전), Y2E 에어밸브(발사). 후진용 출력 없음.
+    비상정지(X03)는 b접점 배선.
+  - 시험: `python3 tests/test_plc_client.py`, `python3 tests/test_app_fire.py`
+    (가짜 MC 서버/mock PLC 사용, 실제 PLC 불필요).
+  - 수동 발사(`/manual` 등)는 아직 예전 방식(아두이노 MANUAL_FIRE)이며 PLC 핸드셰이크 미적용.
 - 물리적 비상정지는 PLC 쪽에서 모터 전원 자체를 차단하는 방식으로 이미
   확보되어 있음 (소프트웨어 STOP와는 별개).
 
@@ -120,7 +138,7 @@ NUDGE:.. / STALL_RETRY:.. / CAL_*   # 보정·걸림 재시도·스위치 각도
 1. 아두이노 PWM 모터 제어 안정화 (진행 중) — 실측 후 `COUNT_MODE_MULTIPLIER`,
    `CURRENT_THRESHOLD`, 가속/감속 계수 튜닝
 2. PLC 래더 로직 작성 (GX Works2)
-3. 아두이노 ↔ PLC 통신 연결 (배선 + 신호 프로토콜)
+3. 아두이노 ↔ PLC 통신 연결 (배선 + 신호 프로토콜) — RPi ↔ PLC 이더넷(MC 프로토콜) 코드는 구현됨, 실제 PLC 연결 시험 전
 4. LiDAR 자동조준(Pan만) 실제 하드웨어 테스트 — 예전에 RPi5에서 폴링 방식
    때문에 반응이 느렸던 적 있음(현재 웹소켓으로 개선됨, 재확인 필요)
 5. HMI 구현 (가장 마지막, 수동 조작 등 단순 기능만)
