@@ -1138,8 +1138,11 @@ function resizeCanvas() {
   }
   if (pCanvas) {
     const width = pCanvas.clientWidth || 500;
-    pCanvas.width = width;
-    pCanvas.height = width;
+    // 크기가 실제로 바뀔 때만 다시 설정 (설정하면 캔버스가 지워지고 리사이즈 루프가 생길 수 있음)
+    if (pCanvas.width !== width || pCanvas.height !== width) {
+      pCanvas.width = width;
+      pCanvas.height = width;
+    }
   }
 }
 

@@ -337,8 +337,12 @@ h2 {
 
 #radarCanvas,
 #presentationRadar {
+  display: block;
   width: 100%;
-  height: 100%;
+  max-width: min(100%, 70vh);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
 }
 
 .lock-text {
