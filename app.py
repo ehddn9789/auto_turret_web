@@ -594,7 +594,7 @@ def record_result(result):
 # Tilt/Power는 기존처럼 관리자 설정값(admin settings)을 그대로 사용한다.
 # ===========================================================================
 
-CAMERA_PAN_OFFSET = 90.0        # 카메라 정면 = pan 90도라고 가정 (장착 방향 다르면 조정)
+CAMERA_PAN_OFFSET = float(os.environ.get("CAMERA_PAN_OFFSET", "89.0"))  # 카메라 정면 = pan 89도 (실측: 90이면 1도 오른쪽으로 치우쳐서 -1 보정). 환경변수로 조정 가능
 CAMERA_AIM_TIMEOUT = 5.0        # 초 - 이 시간 안에 태그를 못 찾으면 발사 취소
 CAMERA_AIM_SETTLE_TIME = 1.5    # 초 - 조준 명령 보낸 뒤 실제로 움직일 시간을 기다림
 
