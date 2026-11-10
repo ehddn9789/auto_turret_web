@@ -52,7 +52,7 @@ DATA_FILE = "system_data.json"
 
 default_data = {
     "settings": {
-        str(i): {"pan": 90, "tilt": 45, "power": 300}
+        str(i): {"pan": 90, "tilt": 45, "power": 30}
         for i in range(1, 10)
     },
     "stats": {
@@ -66,7 +66,7 @@ default_data = {
 current_state = {
     "pan": 90,
     "tilt": 45,
-    "power": 300,
+    "power": 30,
     "target": None,
     "mode": "STANDBY",
     "armed": False,
@@ -888,7 +888,7 @@ def manual_control():
     # 아두이노가 받아주는 범위(PAN_MIN_ANGLE~PAN_MAX_ANGLE)로 미리 제한해서 화면 값과 실제가 어긋나지 않게 함
     pan = int(clamp(int(body.get("pan", current_state["pan"])), PAN_MIN_ANGLE, PAN_MAX_ANGLE))
     tilt = int(clamp(int(body.get("tilt", current_state["tilt"])), 0, 180))
-    power = int(clamp(int(body.get("power", current_state["power"])), 50, 3000))
+    power = int(clamp(int(body.get("power", current_state["power"])), 10, 3000))
 
     with state_lock:
         current_state["pan"] = pan
@@ -1084,7 +1084,7 @@ def save_settings(num):
     # 범위를 벗어난 값이 그대로 저장되던 문제 수정 (item 7)
     pan = int(clamp(int(body["pan"]), 0, 180))
     tilt = int(clamp(int(body["tilt"]), 0, 180))
-    power = int(clamp(int(body["power"]), 50, 3000))
+    power = int(clamp(int(body["power"]), 10, 3000))
 
     with state_lock:
         data_store["settings"][str(num)] = {

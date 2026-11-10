@@ -78,7 +78,7 @@
         <div class="gauge-box">
           <div><span>PAN</span><strong id="panValue">90°</strong><div class="bar"><div id="panBar"></div></div></div>
           <div><span>TILT</span><strong id="tiltValue">45°</strong><div class="bar"><div id="tiltBar"></div></div></div>
-          <div><span>POWER</span><strong id="powerValue">300 ms</strong><div class="bar"><div id="powerBar"></div></div></div>
+          <div><span>POWER</span><strong id="powerValue">30 ms</strong><div class="bar"><div id="powerBar"></div></div></div>
         </div>
       </div>
 
@@ -211,10 +211,10 @@
         <div class="manual-status">
           <div><span>PAN</span><strong id="manualPan">90°</strong></div>
           <div><span>TILT</span><strong id="manualTilt">90°</strong></div>
-          <div><span>POWER</span><strong id="manualPowerText">300 ms</strong></div>
+          <div><span>POWER</span><strong id="manualPowerText">30 ms</strong></div>
         </div>
         <label class="power-label">POWER</label>
-        <input type="range" id="manualPower" min="50" max="3000" value="300" oninput="manualPowerChange()">
+        <input type="range" id="manualPower" min="10" max="3000" value="30" oninput="manualPowerChange()">
         <button id="armBtn" class="arm-btn" onclick="toggleArm()">ARM OFF</button>
         <button class="manual-fire-btn" onclick="manualFire()">MANUAL FIRE</button>
         <button class="stop-btn" onclick="emergencyStop()">EMERGENCY STOP</button>
@@ -276,7 +276,7 @@ let patrolAngle = 90;
 let patrolDirection = 1;
 let manualPan = 90;
 let manualTilt = 90;
-let manualPower = 300;
+let manualPower = 30;
 let armed = false;
 let currentPanAngle = 90;
 
@@ -323,7 +323,7 @@ window.onload = () => {
   updateChecklist();
   updateConnections();
   updateLogs();
-  updateTurretHUD(90, 45, 300);
+  updateTurretHUD(90, 45, 30);
   initJoystick();
   startWarningSystem();
   initCollapsiblePanels();
@@ -669,7 +669,7 @@ async function turretRotateEffect(num) {
 
   let targetPan = 45 + num * 12;
   let targetTilt = 45;
-  let targetPower = 300;
+  let targetPower = 30;
 
   try {
     const res = await fetch('/settings');
@@ -895,7 +895,7 @@ async function loadSettings() {
           <label>TILT</label>
           <input type="number" id="tilt${i}" value="${s.tilt}" min="0" max="180">
           <label>POWER</label>
-          <input type="number" id="power${i}" value="${s.power}" min="50" max="3000">
+          <input type="number" id="power${i}" value="${s.power}" min="10" max="3000">
           <button onclick="saveSetting(${i})">SAVE</button>
         </div>
       `;
