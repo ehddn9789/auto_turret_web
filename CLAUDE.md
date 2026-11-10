@@ -37,7 +37,7 @@
   이동)만 하고 발사 로직은 없음. 구조: `PLC(READY) → RPi → Arduino(조준,
   AIM_OK) → PLC(FIRE_REQUEST 받아 솔레노이드 발사)`.
 - **PLC 통신** (`plc_client.py`, 외부 라이브러리 없이 MC 프로토콜 3E 바이너리/TCP를
-  직접 구현. PLC 쪽: 내장 이더넷 포트, Binary, TCP + MC Protocol, Host Port 1388h=5000).
+  직접 구현. PLC 쪽: 내장 이더넷 포트, Binary, TCP + MC Protocol, Host Port 1392h=5010 (5000~5009는 PLC 시스템 예약이라 불가)).
   `/fire/<num>` 은 카메라 각도 → 아두이노 `TARGET` → **AIM_OK 대기**(±2° 이내, 6초)
   → PLC 핸드셰이크 순으로 진행한다. 아두이노 조준 실패/타임아웃이면 PLC를 건드리지
   않고 취소.
@@ -48,7 +48,7 @@
     시간초과, 4 비상정지). M3/M4는 PLC가 끝나면 스스로 끈다.
   - 실패 시 RPi가 M4, M3를 0으로 되돌려 요청을 거둔다. 발사 성공(M5)일 때만 totalFire 증가.
   - 환경변수: `TURRET_PLC_MODE=mock|real`(기본 mock, TEST_MODE면 항상 mock),
-    `PLC_IP`(기본 192.168.0.10), `PLC_PORT`(기본 5000),
+    `PLC_IP`(기본 192.168.0.10), `PLC_PORT`(기본 5010),
     `TURRET_PLC_MOCK_FAIL=notready|nostart|error|timeout`(mock 오류 시험용).
   - `/plc/status` 로 연결/신호 상태 확인. 1초 주기로 읽어 `connection_state["plc"]`와
     `["emergencyStop"]`(M0 기준)을 갱신한다.

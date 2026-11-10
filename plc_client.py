@@ -94,7 +94,7 @@ class MelsecPlc:
     name = "PLC"
     is_mock = False
 
-    def __init__(self, host, port=5000, timeout=2.0, monitoring_timer=0x0010):
+    def __init__(self, host, port=5010, timeout=2.0, monitoring_timer=0x0010):
         self.host = host
         self.port = int(port)
         self.timeout = timeout

@@ -141,12 +141,12 @@ aim_state = {"status": None, "angle": None, "ts": 0.0, "detail": ""}
 # ---------------------------------------------------------------------------
 # PLC (미쓰비시 Q04UDV) 연결
 #   TURRET_PLC_MODE = mock(기본) | real     TEST_MODE 가 켜져 있으면 항상 mock
-#   PLC_IP (기본 192.168.0.10), PLC_PORT (기본 5000, PLC 쪽 Host Station Port 1388h)
+#   PLC_IP (기본 192.168.0.10), PLC_PORT (기본 5010, PLC 쪽 Host Station Port 1392h; 5000~5009는 시스템 예약이라 사용 불가)
 #   TURRET_PLC_MOCK_FAIL = notready | nostart | error | timeout  (mock 오류 시험용)
 # ---------------------------------------------------------------------------
 PLC_MODE = os.environ.get("TURRET_PLC_MODE", "mock").strip().lower()
 PLC_IP = os.environ.get("PLC_IP", "192.168.0.10")
-PLC_PORT = int(os.environ.get("PLC_PORT", "5000"))
+PLC_PORT = int(os.environ.get("PLC_PORT", "5010"))
 
 AIM_CONFIRM_TIMEOUT = 6.0   # TARGET 명령 후 AIM_OK 를 기다리는 최대 시간(초)
 AIM_ANGLE_TOLERANCE = 2.0   # AIM_OK 각도가 요청 각도와 이 값 이내여야 인정 (이전 MOVE 의 늦은 응답 거름)
