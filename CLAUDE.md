@@ -38,7 +38,7 @@
   AIM_OK) → PLC(FIRE_REQUEST 받아 솔레노이드 발사)`.
 - **PLC 통신** (`plc_client.py`, 외부 라이브러리 없이 MC 프로토콜 3E 바이너리/TCP를
   직접 구현. PLC 쪽: 내장 이더넷 포트, Binary, TCP + MC Protocol, Host Port 1392h=5010 (5000~5009는 PLC 시스템 예약이라 불가)).
-  `/fire/<num>` 은 카메라 각도 → 아두이노 `TARGET` → **AIM_OK 대기**(±2° 이내, 6초)
+  `/fire/<num>` 은 카메라 각도 → 아두이노 `TARGET` → **AIM_OK 대기**(±2° 이내, 12초)
   → PLC 핸드셰이크 순으로 진행한다. 아두이노 조준 실패/타임아웃이면 PLC를 건드리지
   않고 취소.
   - RPi → PLC: D0 목표번호, D1 Pan×10, D2 Tilt, D3 발사 시간(ms, PLC에서 10~3000으로

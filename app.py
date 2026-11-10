@@ -148,7 +148,7 @@ PLC_MODE = os.environ.get("TURRET_PLC_MODE", "mock").strip().lower()
 PLC_IP = os.environ.get("PLC_IP", "192.168.0.10")
 PLC_PORT = int(os.environ.get("PLC_PORT", "5010"))
 
-AIM_CONFIRM_TIMEOUT = 6.0   # TARGET 명령 후 AIM_OK 를 기다리는 최대 시간(초)
+AIM_CONFIRM_TIMEOUT = 12.0  # TARGET 명령 후 AIM_OK 를 기다리는 최대 시간(초)
 AIM_ANGLE_TOLERANCE = 2.0   # AIM_OK 각도가 요청 각도와 이 값 이내여야 인정 (이전 MOVE 의 늦은 응답 거름)
 
 fire_lock = threading.Lock()  # 발사 절차는 한 번에 하나만
